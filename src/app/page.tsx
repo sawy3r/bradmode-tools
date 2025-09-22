@@ -21,7 +21,7 @@ export default function HomePage() {
           <div className="flex justify-between items-center py-6">
             <div className="flex items-center">
               <Wrench className="h-8 w-8 text-blue-600 mr-3" />
-              <h1 className="text-2xl font-bold text-gray-900">Personal Tools</h1>
+              <h1 className="text-2xl font-bold text-gray-900">Bradmode Tools</h1>
             </div>
             <nav className="flex space-x-8">
               <Link href="/" className="text-gray-600 hover:text-gray-900">
@@ -43,7 +43,7 @@ export default function HomePage() {
           </h2>
           <p className="text-xl text-gray-600 max-w-2xl mx-auto">
             A collection of practical tools for everyday calculations and tasks.
-            Built for personal use, shared for everyone.
+            Built for bradmode use, shared for everyone.
           </p>
         </div>
 
@@ -83,7 +83,7 @@ export default function HomePage() {
 
         {/* Footer */}
         <footer className="mt-16 text-center text-gray-500">
-          <p>Built with Next.js and hosted on Vercel</p>
+          <p>© sawyer.net.au</p>
         </footer>
       </main>
     </div>
