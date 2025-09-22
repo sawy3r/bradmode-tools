@@ -14,7 +14,7 @@ export default function PayCalculatorPage() {
             <div className="flex items-center">
               <Link href="/" className="flex items-center mr-4">
                 <Wrench className="h-8 w-8 text-blue-600 mr-3" />
-                <h1 className="text-2xl font-bold text-gray-900">Personal Tools</h1>
+                <h1 className="text-2xl font-bold text-gray-900">Bradmode Tools</h1>
               </Link>
             </div>
             <nav className="flex items-center space-x-8">
