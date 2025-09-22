@@ -5,7 +5,7 @@ import './globals.css';
 const inter = Inter({ subsets: ['latin'] });
 
 export const metadata: Metadata = {
-  title: 'Personal Tools',
+  title: 'Bradmode Tools',
   description: 'A collection of useful calculators and tools for everyday use',
 };
 
