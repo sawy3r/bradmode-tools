@@ -12,7 +12,7 @@ interface InputState {
   taxYear: string;
   fullTimeHours: string;
   fte: string;
-  includeMedicareLevy: boolean;
+  hasPrivateHealthInsurance: boolean;
 }
 
 interface TaxBracket {
@@ -26,6 +26,9 @@ interface CalculationResults {
   grossPay: number;
   taxableIncome: number;
   tax: number;
+  medicareLevy: number;
+  medicareLevySurcharge: number;
+  totalMedicareCharges: number;
   netIncome: number;
   superannuation: number;
   annualLeaveAccrual: number;
@@ -34,6 +37,9 @@ interface CalculationResults {
   ytd: {
     gross: number;
     tax: number;
+    medicareLevy: number;
+    medicareLevySurcharge: number;
+    totalMedicareCharges: number;
     net: number;
     super: number;
   };
@@ -44,6 +50,7 @@ interface CalculationResults {
   fte: number;
 }
 
+// Move these outside the component to satisfy linter
 const taxBrackets: Record<string, TaxBracket[]> = {
   '2024-25': [
     { min: 0, max: 18200, rate: 0, offset: 0 },
@@ -71,7 +78,29 @@ const superRates: Record<string, number> = {
   '2025-26': 0.12
 };
 
-const calculateTax = (taxableIncome: number, year: string, includeMedicare: boolean = true): number => {
+// Medicare Levy thresholds (below these amounts, reduced or no levy applies)
+const medicareLevyThresholds: Record<string, { lower: number; upper: number }> = {
+  '2024-25': { lower: 27222, upper: 34027 },
+  '2025-26': { lower: 27222, upper: 34027 } // Same as previous year
+};
+
+// Medicare Levy Surcharge thresholds and rates
+const mlsThresholds: Record<string, Array<{ min: number; max: number; rate: number }>> = {
+  '2024-25': [
+    { min: 0, max: 97000, rate: 0 },
+    { min: 97001, max: 113000, rate: 0.01 },
+    { min: 113001, max: 151000, rate: 0.0125 },
+    { min: 151001, max: Infinity, rate: 0.015 }
+  ],
+  '2025-26': [
+    { min: 0, max: 101000, rate: 0 },
+    { min: 101001, max: 118000, rate: 0.01 },
+    { min: 118001, max: 158000, rate: 0.0125 },
+    { min: 158001, max: Infinity, rate: 0.015 }
+  ]
+};
+
+const calculateTax = (taxableIncome: number, year: string): number => {
   const brackets = taxBrackets[year];
   let tax = 0;
   
@@ -82,14 +111,41 @@ const calculateTax = (taxableIncome: number, year: string, includeMedicare: bool
     }
   }
   
-  if (includeMedicare) {
-    const medicareThreshold = 23226;
-    if (taxableIncome > medicareThreshold) {
-      tax += taxableIncome * medicareLevy[year];
+  return tax;
+};
+
+const calculateMedicareLevy = (taxableIncome: number, year: string): number => {
+  const thresholds = medicareLevyThresholds[year];
+  const rate = medicareLevy[year];
+  
+  if (taxableIncome <= thresholds.lower) {
+    return 0; // No Medicare levy for low income earners
+  }
+  
+  if (taxableIncome <= thresholds.upper) {
+    // Reduced Medicare levy for income between lower and upper thresholds
+    const reduction = (thresholds.upper - taxableIncome) / (thresholds.upper - thresholds.lower);
+    return taxableIncome * rate * (1 - reduction);
+  }
+  
+  // Full Medicare levy for income above upper threshold
+  return taxableIncome * rate;
+};
+
+const calculateMedicareLevySurcharge = (taxableIncome: number, year: string, hasInsurance: boolean): number => {
+  if (hasInsurance) {
+    return 0; // No surcharge if you have appropriate private health insurance
+  }
+  
+  const thresholds = mlsThresholds[year];
+  
+  for (const threshold of thresholds) {
+    if (taxableIncome >= threshold.min && taxableIncome <= threshold.max) {
+      return taxableIncome * threshold.rate;
     }
   }
   
-  return tax;
+  return 0;
 };
 
 const getPayPeriodsPerYear = (frequency: string): number => {
@@ -122,7 +178,7 @@ const PayslipCalculator: React.FC = () => {
     taxYear: '2025-26',
     fullTimeHours: '38',
     fte: '1.0',
-    includeMedicareLevy: true
+    hasPrivateHealthInsurance: false
   });
 
   const [results, setResults] = useState<CalculationResults | null>(null);
@@ -143,9 +199,23 @@ const PayslipCalculator: React.FC = () => {
     
     // Calculate current period amounts
     const grossPay = effectiveAnnualSalary / periodsPerYear;
-    const annualTax = calculateTax(effectiveAnnualSalary, inputs.taxYear, inputs.includeMedicareLevy);
+    const annualTax = calculateTax(effectiveAnnualSalary, inputs.taxYear);
     const taxPerPeriod = annualTax / periodsPerYear;
-    const netPay = grossPay - taxPerPeriod;
+    
+    // Calculate Medicare charges
+    const annualMedicareLevy = calculateMedicareLevy(effectiveAnnualSalary, inputs.taxYear);
+    const annualMedicareLevySurcharge = calculateMedicareLevySurcharge(
+      effectiveAnnualSalary, 
+      inputs.taxYear, 
+      inputs.hasPrivateHealthInsurance
+    );
+    const annualTotalMedicareCharges = annualMedicareLevy + annualMedicareLevySurcharge;
+    
+    const medicareLevyPerPeriod = annualMedicareLevy / periodsPerYear;
+    const medicareLevySurchargePerPeriod = annualMedicareLevySurcharge / periodsPerYear;
+    const totalMedicareChargesPerPeriod = annualTotalMedicareCharges / periodsPerYear;
+    
+    const netPay = grossPay - taxPerPeriod - totalMedicareChargesPerPeriod;
     
     // Superannuation
     const superRate = superRates[inputs.taxYear];
@@ -176,13 +246,19 @@ const PayslipCalculator: React.FC = () => {
     const ytdProportion = daysDiff / yearDays;
     const ytdMaxGross = effectiveAnnualSalary * ytdProportion;
     const ytdMaxTax = annualTax * ytdProportion;
-    const ytdMaxNet = ytdMaxGross - ytdMaxTax;
+    const ytdMaxMedicareLevy = annualMedicareLevy * ytdProportion;
+    const ytdMaxMedicareLevySurcharge = annualMedicareLevySurcharge * ytdProportion;
+    const ytdMaxTotalMedicareCharges = annualTotalMedicareCharges * ytdProportion;
+    const ytdMaxNet = ytdMaxGross - ytdMaxTax - ytdMaxTotalMedicareCharges;
     const ytdMaxSuper = ytdMaxGross * superRate;
     
     const periodsToDate = Math.floor(daysDiff / payPeriodDays) + 1;
     
     const ytdGross = Math.min(grossPay * periodsToDate, ytdMaxGross);
     const ytdTax = Math.min(taxPerPeriod * periodsToDate, ytdMaxTax);
+    const ytdMedicareLevy = Math.min(medicareLevyPerPeriod * periodsToDate, ytdMaxMedicareLevy);
+    const ytdMedicareLevySurcharge = Math.min(medicareLevySurchargePerPeriod * periodsToDate, ytdMaxMedicareLevySurcharge);
+    const ytdTotalMedicareCharges = Math.min(totalMedicareChargesPerPeriod * periodsToDate, ytdMaxTotalMedicareCharges);
     const ytdNet = Math.min(netPay * periodsToDate, ytdMaxNet);
     const ytdSuper = Math.min(superannuation * periodsToDate, ytdMaxSuper);
 
@@ -192,6 +268,9 @@ const PayslipCalculator: React.FC = () => {
       grossPay,
       taxableIncome: grossPay,
       tax: taxPerPeriod,
+      medicareLevy: medicareLevyPerPeriod,
+      medicareLevySurcharge: medicareLevySurchargePerPeriod,
+      totalMedicareCharges: totalMedicareChargesPerPeriod,
       netIncome: netPay,
       superannuation,
       annualLeaveAccrual: annualLeaveAccrualHours,
@@ -200,6 +279,9 @@ const PayslipCalculator: React.FC = () => {
       ytd: {
         gross: ytdGross,
         tax: ytdTax,
+        medicareLevy: ytdMedicareLevy,
+        medicareLevySurcharge: ytdMedicareLevySurcharge,
+        totalMedicareCharges: ytdTotalMedicareCharges,
         net: ytdNet,
         super: ytdSuper
       },
@@ -271,14 +353,18 @@ const PayslipCalculator: React.FC = () => {
 
               <div className="flex items-center justify-between p-3 bg-white rounded-md border border-gray-300">
                 <div>
-                  <label className="text-sm font-medium text-gray-700">Include Medicare Levy (2%)</label>
-                  <p className="text-xs text-gray-500">Apply Medicare levy to taxable income above threshold</p>
+                  <label className="text-sm font-medium text-gray-700">
+                    I have appropriate private patient hospital cover
+                  </label>
+                  <p className="text-xs text-gray-500">
+                    Hospital cover with excess ≤ $750 (single) / $1,500 (family)
+                  </p>
                 </div>
                 <label className="relative inline-flex items-center cursor-pointer">
                   <input
                     type="checkbox"
-                    checked={inputs.includeMedicareLevy}
-                    onChange={(e) => handleInputChange('includeMedicareLevy', e.target.checked)}
+                    checked={inputs.hasPrivateHealthInsurance}
+                    onChange={(e) => handleInputChange('hasPrivateHealthInsurance', e.target.checked)}
                     className="sr-only peer"
                   />
                   <div className="w-11 h-6 bg-gray-200 peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-blue-300 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-blue-600"></div>
@@ -423,9 +509,19 @@ const PayslipCalculator: React.FC = () => {
                       <span className="font-medium">{formatCurrency(results.taxableIncome)}</span>
                     </div>
                     <div className="flex justify-between">
-                      <span className="text-gray-600">Tax{inputs.includeMedicareLevy ? ' + Medicare' : ''}:</span>
+                      <span className="text-gray-600">Income Tax:</span>
                       <span className="font-medium text-red-600">-{formatCurrency(results.tax)}</span>
                     </div>
+                    <div className="flex justify-between">
+                      <span className="text-gray-600">Medicare Levy (2%):</span>
+                      <span className="font-medium text-red-600">-{formatCurrency(results.medicareLevy)}</span>
+                    </div>
+                    {results.medicareLevySurcharge > 0 && (
+                      <div className="flex justify-between">
+                        <span className="text-gray-600">Medicare Levy Surcharge:</span>
+                        <span className="font-medium text-red-600">-{formatCurrency(results.medicareLevySurcharge)}</span>
+                      </div>
+                    )}
                     <div className="flex justify-between border-t pt-2">
                       <span className="text-gray-900 font-semibold">Net Income:</span>
                       <span className="font-bold text-green-600">{formatCurrency(results.netIncome)}</span>
@@ -450,9 +546,19 @@ const PayslipCalculator: React.FC = () => {
                       <span className="font-medium">{formatCurrency(results.ytd.gross)}</span>
                     </div>
                     <div className="flex justify-between">
-                      <span className="text-gray-600">YTD Tax{inputs.includeMedicareLevy ? ' + Medicare' : ''}:</span>
+                      <span className="text-gray-600">YTD Income Tax:</span>
                       <span className="font-medium text-red-600">-{formatCurrency(results.ytd.tax)}</span>
                     </div>
+                    <div className="flex justify-between">
+                      <span className="text-gray-600">YTD Medicare Levy:</span>
+                      <span className="font-medium text-red-600">-{formatCurrency(results.ytd.medicareLevy)}</span>
+                    </div>
+                    {results.ytd.medicareLevySurcharge > 0 && (
+                      <div className="flex justify-between">
+                        <span className="text-gray-600">YTD Medicare Levy Surcharge:</span>
+                        <span className="font-medium text-red-600">-{formatCurrency(results.ytd.medicareLevySurcharge)}</span>
+                      </div>
+                    )}
                     <div className="flex justify-between">
                       <span className="text-gray-600">YTD Net:</span>
                       <span className="font-medium text-green-600">{formatCurrency(results.ytd.net)}</span>
@@ -500,13 +606,18 @@ const PayslipCalculator: React.FC = () => {
             {results && (
               <div className="mt-6 text-xs text-gray-500 bg-white p-3 rounded-md">
                 <p><strong>Calculation Notes ({inputs.taxYear}):</strong></p>
-                <p>• Tax calculated using {inputs.taxYear} ATO rates{inputs.includeMedicareLevy ? ' + 2% Medicare levy' : ''}</p>
+                <p>• Income tax calculated using {inputs.taxYear} ATO rates</p>
+                <p>• Medicare levy (2%) applies to taxable income above thresholds</p>
+                {results.medicareLevySurcharge > 0 ? (
+                  <p className="text-orange-600 font-medium">• Medicare levy surcharge applies - no appropriate private health insurance</p>
+                ) : inputs.hasPrivateHealthInsurance ? (
+                  <p className="text-green-600 font-medium">• No Medicare levy surcharge - you have private health insurance</p>
+                ) : (
+                  <p className="text-blue-600 font-medium">• No Medicare levy surcharge - income below threshold</p>
+                )}
                 <p>• Super at {(superRates[inputs.taxYear] * 100).toFixed(1)}% ({inputs.taxYear} rate)</p>
                 <p>• Annual leave: 20 days/year (full-time), pro-rated for part-time</p>
                 <p>• FTE of {formatRate(results.fte)} = {formatHours(parseFloat(inputs.fullTimeHours) * results.fte)} hours/week</p>
-                {!inputs.includeMedicareLevy && (
-                  <p className="text-blue-600 font-medium">ℹ️ Medicare levy (2%) excluded from calculations</p>
-                )}
               </div>
             )}
           </div>
