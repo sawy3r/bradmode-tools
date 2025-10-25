@@ -1,9 +1,18 @@
 'use client';
 
 import React, { useState, useEffect, useCallback } from 'react';
-import { Calculator, Calendar, DollarSign, FileText, Clock, Users, Download, Plus, Trash2, Edit } from 'lucide-react';
+import { Calculator, Calendar, DollarSign, FileText, Clock, Users, Download, Plus, Trash2 } from 'lucide-react';
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
+
+// ============ TYPE EXTENSIONS ============
+
+// Extend jsPDF to include autoTable properties
+interface jsPDFWithAutoTable extends jsPDF {
+  lastAutoTable?: {
+    finalY: number;
+  };
+}
 
 // ============ INTERFACES ============
 
@@ -348,9 +357,6 @@ const PayslipCalculator: React.FC = () => {
     const ytdStartDate = employmentStart > financialYearStart ? employmentStart : financialYearStart;
 
     const daysDiff = Math.floor((payDate.getTime() - ytdStartDate.getTime()) / (1000 * 60 * 60 * 24));
-    const yearDays = 365.25;
-
-    const ytdProportion = daysDiff / yearDays;
     const periodsToDate = Math.floor(daysDiff / payPeriodDays) + 1;
 
     // YTD calculations
@@ -538,7 +544,7 @@ const PayslipCalculator: React.FC = () => {
     if (!results) return;
 
     const numberOfPayslips = parseInt(inputs.numberOfPayslips) || 1;
-    const doc = new jsPDF();
+    const doc = new jsPDF() as jsPDFWithAutoTable;
 
     for (let i = 0; i < numberOfPayslips; i++) {
       if (i > 0) {
@@ -627,7 +633,7 @@ const PayslipCalculator: React.FC = () => {
         foot: [['Gross Pay', '', '', formatCurrency(results.grossPay)]],
       });
 
-      yPos = (doc as any).lastAutoTable.finalY + 10;
+      yPos = doc.lastAutoTable?.finalY ? doc.lastAutoTable.finalY + 10 : yPos + 10;
 
       // Deductions Section
       const deductionsData = [];
@@ -658,7 +664,7 @@ const PayslipCalculator: React.FC = () => {
         headStyles: { fillColor: [217, 83, 79], textColor: 255, fontStyle: 'bold' },
       });
 
-      yPos = (doc as any).lastAutoTable.finalY + 10;
+      yPos = doc.lastAutoTable?.finalY ? doc.lastAutoTable.finalY + 10 : yPos + 10;
 
       // Summary Section
       const summaryData = [
@@ -677,7 +683,7 @@ const PayslipCalculator: React.FC = () => {
         footStyles: { fillColor: [245, 245, 245], textColor: 0, fontStyle: 'bold' },
       });
 
-      yPos = (doc as any).lastAutoTable.finalY + 10;
+      yPos = doc.lastAutoTable?.finalY ? doc.lastAutoTable.finalY + 10 : yPos + 10;
 
       // Leave Balance Section
       if (inputs.leaveItems.length > 0) {
@@ -694,7 +700,7 @@ const PayslipCalculator: React.FC = () => {
           headStyles: { fillColor: [240, 173, 78], textColor: 255, fontStyle: 'bold' },
         });
 
-        yPos = (doc as any).lastAutoTable.finalY + 5;
+        yPos = doc.lastAutoTable?.finalY ? doc.lastAutoTable.finalY + 5 : yPos + 5;
       }
 
       // Annual Leave Accrual
@@ -811,7 +817,7 @@ const PayslipCalculator: React.FC = () => {
                   className="w-full p-3 border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
                 />
                 <p className="text-xs text-gray-500 mt-1">
-                  e.g., "Workers Compensation", "Maternity Leave Pay"
+                  e.g., &quot;Workers Compensation&quot;, &quot;Maternity Leave Pay&quot;
                 </p>
               </div>
 

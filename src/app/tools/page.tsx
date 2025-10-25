@@ -2,7 +2,7 @@
 
 import Link from 'next/link';
 import { useState, useEffect } from 'react';
-import { ArrowLeft, Wrench, Search, Filter, TrendingUp, Calendar, Hash, Clock, Eye } from 'lucide-react';
+import { ArrowLeft, Wrench, Search, Filter, TrendingUp, Hash, Clock, Eye } from 'lucide-react';
 
 interface Tool {
   id: string;
