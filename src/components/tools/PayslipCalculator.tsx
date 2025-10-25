@@ -652,14 +652,22 @@ const PayslipCalculator: React.FC = () => {
     // Pay Period Summary bar
     yPos = 85;
     doc.setFillColor(220, 220, 220);
-    doc.rect(20, yPos, 170, 8, 'F');
-    doc.setFontSize(9);
+    doc.setDrawColor(180, 180, 180);
+    doc.setLineWidth(0.5);
+    const summaryBarHeight = 8;
+    doc.rect(20, yPos, 175, summaryBarHeight, 'FD'); // Wider bar with border
+
+    // Add bottom border
+    doc.setDrawColor(180, 180, 180);
+    doc.line(20, yPos + summaryBarHeight, 195, yPos + summaryBarHeight);
+
+    doc.setFontSize(8);
     doc.setFont('helvetica', 'normal');
     doc.text(`Pay Period: ${currentPayDate.toLocaleDateString('en-AU')} - ${currentPeriodEndDate.toLocaleDateString('en-AU')}`, 22, yPos + 5.5);
-    doc.text(`Payment Date: ${currentPayDate.toLocaleDateString('en-AU')}`, 90, yPos + 5.5);
+    doc.text(`Payment Date: ${currentPayDate.toLocaleDateString('en-AU')}`, 85, yPos + 5.5);
     doc.setFont('helvetica', 'bold');
-    doc.text(`Total Earnings: ${formatCurrency(results.grossPay)}`, 130, yPos + 5.5);
-    doc.text(`Net Pay: ${formatCurrency(results.netIncome)}`, 165, yPos + 5.5);
+    doc.text(`Total Earnings: ${formatCurrency(results.grossPay)}`, 125, yPos + 5.5);
+    doc.text(`Net Pay: ${formatCurrency(results.netIncome)}`, 162, yPos + 5.5);
 
     yPos += 15;
 
@@ -702,15 +710,34 @@ const PayslipCalculator: React.FC = () => {
       body: salaryData,
       foot: [['', '', 'TOTAL', formatCurrency(results.grossPay), formatCurrency(results.ytd.gross)]],
       theme: 'plain',
-      headStyles: { fillColor: [255, 255, 255], textColor: 0, fontStyle: 'bold', fontSize: 9 },
-      footStyles: { fillColor: [240, 240, 240], textColor: 0, fontStyle: 'bold' },
-      styles: { fontSize: 9, cellPadding: 2 },
+      headStyles: {
+        fillColor: [255, 255, 255],
+        textColor: 0,
+        fontStyle: 'bold',
+        fontSize: 9,
+        lineWidth: 0.5,
+        lineColor: [180, 180, 180]
+      },
+      footStyles: {
+        fillColor: [240, 240, 240],
+        textColor: 0,
+        fontStyle: 'bold',
+        lineWidth: 0.5,
+        lineColor: [180, 180, 180]
+      },
+      styles: { fontSize: 9, cellPadding: 1 },
       columnStyles: {
-        0: { cellWidth: 80 },
+        0: { cellWidth: 80, halign: 'left' },
         1: { halign: 'right', cellWidth: 25 },
         2: { halign: 'right', cellWidth: 25 },
         3: { halign: 'right', cellWidth: 30 },
         4: { halign: 'right', cellWidth: 30 }
+      },
+      didParseCell: function(data) {
+        // Right-align numeric column headers
+        if (data.section === 'head' && data.column.index > 0) {
+          data.cell.styles.halign = 'right';
+        }
       }
     });
 
@@ -729,13 +756,31 @@ const PayslipCalculator: React.FC = () => {
         body: deductionsData,
         foot: [['TOTAL', formatCurrency(results.preTaxDeductionsTotal), formatCurrency(results.ytd.preTaxDeductions)]],
         theme: 'plain',
-        headStyles: { fillColor: [255, 255, 255], textColor: 0, fontStyle: 'bold', fontSize: 9 },
-        footStyles: { fillColor: [240, 240, 240], textColor: 0, fontStyle: 'bold' },
-        styles: { fontSize: 9, cellPadding: 2 },
+        headStyles: {
+          fillColor: [255, 255, 255],
+          textColor: 0,
+          fontStyle: 'bold',
+          fontSize: 9,
+          lineWidth: 0.5,
+          lineColor: [180, 180, 180]
+        },
+        footStyles: {
+          fillColor: [240, 240, 240],
+          textColor: 0,
+          fontStyle: 'bold',
+          lineWidth: 0.5,
+          lineColor: [180, 180, 180]
+        },
+        styles: { fontSize: 9, cellPadding: 1 },
         columnStyles: {
-          0: { cellWidth: 130 },
+          0: { cellWidth: 130, halign: 'left' },
           1: { halign: 'right', cellWidth: 30 },
           2: { halign: 'right', cellWidth: 30 }
+        },
+        didParseCell: function(data) {
+          if (data.section === 'head' && data.column.index > 0) {
+            data.cell.styles.halign = 'right';
+          }
         }
       });
 
@@ -759,13 +804,31 @@ const PayslipCalculator: React.FC = () => {
       body: taxData,
       foot: [['TOTAL', formatCurrency(results.tax + results.totalMedicareCharges), formatCurrency(results.ytd.tax + results.ytd.totalMedicareCharges)]],
       theme: 'plain',
-      headStyles: { fillColor: [255, 255, 255], textColor: 0, fontStyle: 'bold', fontSize: 9 },
-      footStyles: { fillColor: [240, 240, 240], textColor: 0, fontStyle: 'bold' },
-      styles: { fontSize: 9, cellPadding: 2 },
+      headStyles: {
+        fillColor: [255, 255, 255],
+        textColor: 0,
+        fontStyle: 'bold',
+        fontSize: 9,
+        lineWidth: 0.5,
+        lineColor: [180, 180, 180]
+      },
+      footStyles: {
+        fillColor: [240, 240, 240],
+        textColor: 0,
+        fontStyle: 'bold',
+        lineWidth: 0.5,
+        lineColor: [180, 180, 180]
+      },
+      styles: { fontSize: 9, cellPadding: 1 },
       columnStyles: {
-        0: { cellWidth: 130 },
+        0: { cellWidth: 130, halign: 'left' },
         1: { halign: 'right', cellWidth: 30 },
         2: { halign: 'right', cellWidth: 30 }
+      },
+      didParseCell: function(data) {
+        if (data.section === 'head' && data.column.index > 0) {
+          data.cell.styles.halign = 'right';
+        }
       }
     });
 
@@ -785,13 +848,32 @@ const PayslipCalculator: React.FC = () => {
       body: superData,
       foot: [['TOTAL', formatCurrency(results.superannuation), formatCurrency(results.ytd.super)]],
       theme: 'plain',
-      headStyles: { fillColor: [255, 255, 255], textColor: 0, fontStyle: 'bold', fontSize: 9 },
-      footStyles: { fillColor: [240, 240, 240], textColor: 0, fontStyle: 'bold' },
-      styles: { fontSize: 9, cellPadding: 2 },
+      headStyles: {
+        fillColor: [255, 255, 255],
+        textColor: 0,
+        fontStyle: 'bold',
+        fontSize: 9,
+        lineWidth: 0.5,
+        lineColor: [180, 180, 180]
+      },
+      footStyles: {
+        fillColor: [240, 240, 240],
+        textColor: 0,
+        fontStyle: 'bold',
+        lineWidth: 0.5,
+        lineColor: [180, 180, 180]
+      },
+      styles: { fontSize: 9, cellPadding: 1 },
       columnStyles: {
-        0: { cellWidth: 130 },
+        0: { cellWidth: 130, halign: 'left' },
         1: { halign: 'right', cellWidth: 30 },
         2: { halign: 'right', cellWidth: 30 }
+      },
+      didParseCell: function(data) {
+        // Right-align numeric column headers
+        if (data.section === 'head' && data.column.index > 0) {
+          data.cell.styles.halign = 'right';
+        }
       }
     });
 
@@ -807,13 +889,26 @@ const PayslipCalculator: React.FC = () => {
       head: [['LEAVE', 'ACCRUED', 'USED', 'BALANCE']],
       body: leaveData,
       theme: 'plain',
-      headStyles: { fillColor: [255, 255, 255], textColor: 0, fontStyle: 'bold', fontSize: 9 },
-      styles: { fontSize: 9, cellPadding: 2 },
+      headStyles: {
+        fillColor: [255, 255, 255],
+        textColor: 0,
+        fontStyle: 'bold',
+        fontSize: 9,
+        lineWidth: 0.5,
+        lineColor: [180, 180, 180]
+      },
+      styles: { fontSize: 9, cellPadding: 1 },
       columnStyles: {
-        0: { cellWidth: 100 },
+        0: { cellWidth: 100, halign: 'left' },
         1: { halign: 'right', cellWidth: 30 },
         2: { halign: 'right', cellWidth: 30 },
         3: { halign: 'right', cellWidth: 30 }
+      },
+      didParseCell: function(data) {
+        // Right-align numeric column headers
+        if (data.section === 'head' && data.column.index > 0) {
+          data.cell.styles.halign = 'right';
+        }
       }
     });
 
@@ -830,13 +925,26 @@ const PayslipCalculator: React.FC = () => {
         head: [['PAYMENT DETAILS', 'REFERENCE', '', 'AMOUNT']],
         body: paymentData,
         theme: 'plain',
-        headStyles: { fillColor: [255, 255, 255], textColor: 0, fontStyle: 'bold', fontSize: 9 },
-        styles: { fontSize: 9, cellPadding: 2 },
+        headStyles: {
+          fillColor: [255, 255, 255],
+          textColor: 0,
+          fontStyle: 'bold',
+          fontSize: 9,
+          lineWidth: 0.5,
+          lineColor: [180, 180, 180]
+        },
+        styles: { fontSize: 9, cellPadding: 1 },
         columnStyles: {
-          0: { cellWidth: 60 },
-          1: { cellWidth: 50 },
-          2: { cellWidth: 50 },
+          0: { cellWidth: 60, halign: 'left' },
+          1: { cellWidth: 50, halign: 'left' },
+          2: { cellWidth: 50, halign: 'left' },
           3: { halign: 'right', cellWidth: 30 }
+        },
+        didParseCell: function(data) {
+          // Right-align numeric column headers (only last column)
+          if (data.section === 'head' && data.column.index === 3) {
+            data.cell.styles.halign = 'right';
+          }
         }
       });
 
