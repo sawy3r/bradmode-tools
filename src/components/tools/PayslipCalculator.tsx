@@ -62,12 +62,22 @@ interface InputState {
   employeeName: string;
   employeeNumber: string;
   numberOfPayslips: string;
+  pdfTemplate: string;
+  employeeAddress: string;
+  companyAddress: string;
+  companyABN: string;
 
   // Dynamic Lists
   preTaxDeductions: PreTaxDeduction[];
   postTaxDeductions: PostTaxDeduction[];
   additionalEarnings: AdditionalEarning[];
   leaveItems: LeaveItem[];
+}
+
+interface TemplateConfig {
+  id: string;
+  name: string;
+  description: string;
 }
 
 interface TaxBracket {
@@ -179,6 +189,31 @@ const mlsThresholds: Record<string, Array<{ min: number; max: number; rate: numb
   ]
 };
 
+// ============ TEMPLATE CONFIGURATIONS ============
+
+const templates: TemplateConfig[] = [
+  {
+    id: 'xero-like',
+    name: 'Xero-like',
+    description: 'Modern, clean design with clear sections and gray highlights'
+  },
+  {
+    id: 'sap-like',
+    name: 'SAP-like',
+    description: 'Corporate dense layout with detailed tables and borders'
+  },
+  {
+    id: 'simple',
+    name: 'Simple',
+    description: 'Minimalist black and white design with single table'
+  },
+  {
+    id: 'government',
+    name: 'Government',
+    description: 'Official, clean design suitable for public sector'
+  }
+];
+
 // ============ CALCULATION FUNCTIONS ============
 
 const calculateTax = (taxableIncome: number, year: string): number => {
@@ -265,6 +300,10 @@ const PayslipCalculator: React.FC = () => {
     employeeName: '',
     employeeNumber: '',
     numberOfPayslips: '1',
+    pdfTemplate: 'xero-like',
+    employeeAddress: '',
+    companyAddress: '',
+    companyABN: '',
     preTaxDeductions: [],
     postTaxDeductions: [],
     additionalEarnings: [],
@@ -803,6 +842,62 @@ const PayslipCalculator: React.FC = () => {
                   placeholder="EMP001"
                   className="w-full p-3 border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
                 />
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  Employee Address (for PDF)
+                </label>
+                <input
+                  type="text"
+                  value={inputs.employeeAddress}
+                  onChange={(e) => handleInputChange('employeeAddress', e.target.value)}
+                  placeholder="123 Main St, Suburb VIC 3000"
+                  className="w-full p-3 border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                />
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  Company Address (for PDF)
+                </label>
+                <input
+                  type="text"
+                  value={inputs.companyAddress}
+                  onChange={(e) => handleInputChange('companyAddress', e.target.value)}
+                  placeholder="456 Business Ave, Melbourne VIC 3000"
+                  className="w-full p-3 border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                />
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  Company ABN (for PDF)
+                </label>
+                <input
+                  type="text"
+                  value={inputs.companyABN}
+                  onChange={(e) => handleInputChange('companyABN', e.target.value)}
+                  placeholder="12 345 678 901"
+                  className="w-full p-3 border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                />
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  PDF Template Style
+                </label>
+                <select
+                  value={inputs.pdfTemplate}
+                  onChange={(e) => handleInputChange('pdfTemplate', e.target.value)}
+                  className="w-full p-3 border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                >
+                  {templates.map(template => (
+                    <option key={template.id} value={template.id}>
+                      {template.name} - {template.description}
+                    </option>
+                  ))}
+                </select>
               </div>
 
               <div>
