@@ -66,6 +66,10 @@ interface InputState {
   employeeAddress: string;
   companyAddress: string;
   companyABN: string;
+  superFundName: string;
+  bankName: string;
+  bankBSB: string;
+  bankAccountNumber: string;
 
   // Dynamic Lists
   preTaxDeductions: PreTaxDeduction[];
@@ -304,6 +308,10 @@ const PayslipCalculator: React.FC = () => {
     employeeAddress: '',
     companyAddress: '',
     companyABN: '',
+    superFundName: '',
+    bankName: '',
+    bankBSB: '',
+    bankAccountNumber: '',
     preTaxDeductions: [],
     postTaxDeductions: [],
     additionalEarnings: [],
@@ -898,6 +906,61 @@ const PayslipCalculator: React.FC = () => {
                     </option>
                   ))}
                 </select>
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  Superannuation Fund Name
+                </label>
+                <input
+                  type="text"
+                  value={inputs.superFundName}
+                  onChange={(e) => handleInputChange('superFundName', e.target.value)}
+                  placeholder="e.g., Australian Super, IOOF, AMP"
+                  className="w-full p-3 border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                />
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  Bank Name
+                </label>
+                <input
+                  type="text"
+                  value={inputs.bankName}
+                  onChange={(e) => handleInputChange('bankName', e.target.value)}
+                  placeholder="e.g., NAB, Commonwealth Bank, Westpac"
+                  className="w-full p-3 border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                />
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">
+                    BSB
+                  </label>
+                  <input
+                    type="text"
+                    value={inputs.bankBSB}
+                    onChange={(e) => handleInputChange('bankBSB', e.target.value)}
+                    placeholder="082-451"
+                    maxLength={7}
+                    className="w-full p-3 border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">
+                    Account Number
+                  </label>
+                  <input
+                    type="text"
+                    value={inputs.bankAccountNumber}
+                    onChange={(e) => handleInputChange('bankAccountNumber', e.target.value)}
+                    placeholder="12345678"
+                    className="w-full p-3 border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                  />
+                </div>
               </div>
 
               <div>
