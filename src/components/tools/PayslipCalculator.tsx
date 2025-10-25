@@ -1,9 +1,42 @@
 'use client';
 
 import React, { useState, useEffect, useCallback } from 'react';
-import { Calculator, Calendar, DollarSign, FileText, Clock, Users } from 'lucide-react';
+import { Calculator, Calendar, DollarSign, FileText, Clock, Users, Download, Plus, Trash2, Edit } from 'lucide-react';
+import jsPDF from 'jspdf';
+import autoTable from 'jspdf-autotable';
+
+// ============ INTERFACES ============
+
+interface PreTaxDeduction {
+  id: string;
+  name: string;
+  amount: number;
+  ytdAmount: number;
+}
+
+interface PostTaxDeduction {
+  id: string;
+  name: string;
+  amount: number;
+  ytdAmount: number;
+}
+
+interface AdditionalEarning {
+  id: string;
+  name: string;
+  amount: number;
+  hours?: number;
+  rate?: number;
+}
+
+interface LeaveItem {
+  id: string;
+  type: string; // 'sick', 'personal', 'annual', 'unpaid'
+  hours: number;
+}
 
 interface InputState {
+  // Basic Details
   payFrequency: string;
   payDate: string;
   periodEndDate: string;
@@ -13,6 +46,19 @@ interface InputState {
   fullTimeHours: string;
   fte: string;
   hasPrivateHealthInsurance: boolean;
+
+  // New Fields
+  basePayName: string;
+  companyName: string;
+  employeeName: string;
+  employeeNumber: string;
+  numberOfPayslips: string;
+
+  // Dynamic Lists
+  preTaxDeductions: PreTaxDeduction[];
+  postTaxDeductions: PostTaxDeduction[];
+  additionalEarnings: AdditionalEarning[];
+  leaveItems: LeaveItem[];
 }
 
 interface TaxBracket {
@@ -23,26 +69,51 @@ interface TaxBracket {
 }
 
 interface CalculationResults {
+  // Base calculations
+  basePayHours: number;
+  basePayAmount: number;
+
+  // Additional earnings
+  additionalEarningsTotal: number;
+
+  // Gross and taxable
   grossPay: number;
+  preTaxDeductionsTotal: number;
   taxableIncome: number;
+
+  // Tax and levies
   tax: number;
   medicareLevy: number;
   medicareLevySurcharge: number;
   totalMedicareCharges: number;
+
+  // Post-tax
+  postTaxDeductionsTotal: number;
   netIncome: number;
+
+  // Super and leave
   superannuation: number;
   annualLeaveAccrual: number;
+
+  // Hours and rates
   hoursWorked: number;
+  leaveHoursTaken: number;
   hourlyRate: number;
+
+  // YTD
   ytd: {
     gross: number;
+    preTaxDeductions: number;
     tax: number;
     medicareLevy: number;
     medicareLevySurcharge: number;
     totalMedicareCharges: number;
+    postTaxDeductions: number;
     net: number;
     super: number;
   };
+
+  // Period info
   periodsPerYear: number;
   payPeriodDays: number;
   periodsToDate: number;
@@ -50,7 +121,8 @@ interface CalculationResults {
   fte: number;
 }
 
-// Move these outside the component to satisfy linter
+// ============ TAX CONSTANTS ============
+
 const taxBrackets: Record<string, TaxBracket[]> = {
   '2024-25': [
     { min: 0, max: 18200, rate: 0, offset: 0 },
@@ -78,13 +150,11 @@ const superRates: Record<string, number> = {
   '2025-26': 0.12
 };
 
-// Medicare Levy thresholds (below these amounts, reduced or no levy applies)
 const medicareLevyThresholds: Record<string, { lower: number; upper: number }> = {
   '2024-25': { lower: 27222, upper: 34027 },
-  '2025-26': { lower: 27222, upper: 34027 } // Same as previous year
+  '2025-26': { lower: 27222, upper: 34027 }
 };
 
-// Medicare Levy Surcharge thresholds and rates
 const mlsThresholds: Record<string, Array<{ min: number; max: number; rate: number }>> = {
   '2024-25': [
     { min: 0, max: 97000, rate: 0 },
@@ -100,51 +170,51 @@ const mlsThresholds: Record<string, Array<{ min: number; max: number; rate: numb
   ]
 };
 
+// ============ CALCULATION FUNCTIONS ============
+
 const calculateTax = (taxableIncome: number, year: string): number => {
   const brackets = taxBrackets[year];
   let tax = 0;
-  
+
   for (const bracket of brackets) {
     if (taxableIncome >= bracket.min && taxableIncome <= bracket.max) {
       tax = bracket.offset + (taxableIncome - bracket.min + 1) * bracket.rate;
       break;
     }
   }
-  
+
   return tax;
 };
 
 const calculateMedicareLevy = (taxableIncome: number, year: string): number => {
   const thresholds = medicareLevyThresholds[year];
   const rate = medicareLevy[year];
-  
+
   if (taxableIncome <= thresholds.lower) {
-    return 0; // No Medicare levy for low income earners
+    return 0;
   }
-  
+
   if (taxableIncome <= thresholds.upper) {
-    // Reduced Medicare levy for income between lower and upper thresholds
     const reduction = (thresholds.upper - taxableIncome) / (thresholds.upper - thresholds.lower);
     return taxableIncome * rate * (1 - reduction);
   }
-  
-  // Full Medicare levy for income above upper threshold
+
   return taxableIncome * rate;
 };
 
 const calculateMedicareLevySurcharge = (taxableIncome: number, year: string, hasInsurance: boolean): number => {
   if (hasInsurance) {
-    return 0; // No surcharge if you have appropriate private health insurance
+    return 0;
   }
-  
+
   const thresholds = mlsThresholds[year];
-  
+
   for (const threshold of thresholds) {
     if (taxableIncome >= threshold.min && taxableIncome <= threshold.max) {
       return taxableIncome * threshold.rate;
     }
   }
-  
+
   return 0;
 };
 
@@ -168,6 +238,8 @@ const getPayPeriodDays = (frequency: string): number => {
   return days[frequency] || 14;
 };
 
+// ============ MAIN COMPONENT ============
+
 const PayslipCalculator: React.FC = () => {
   const [inputs, setInputs] = useState<InputState>({
     payFrequency: 'fortnightly',
@@ -178,7 +250,16 @@ const PayslipCalculator: React.FC = () => {
     taxYear: '2025-26',
     fullTimeHours: '38',
     fte: '1.0',
-    hasPrivateHealthInsurance: false
+    hasPrivateHealthInsurance: false,
+    basePayName: 'Ordinary Hours',
+    companyName: '',
+    employeeName: '',
+    employeeNumber: '',
+    numberOfPayslips: '1',
+    preTaxDeductions: [],
+    postTaxDeductions: [],
+    additionalEarnings: [],
+    leaveItems: []
   });
 
   const [results, setResults] = useState<CalculationResults | null>(null);
@@ -193,38 +274,64 @@ const PayslipCalculator: React.FC = () => {
     const fte = parseFloat(inputs.fte) || 1.0;
     const periodsPerYear = getPayPeriodsPerYear(inputs.payFrequency);
     const payPeriodDays = getPayPeriodDays(inputs.payFrequency);
-    
-    // Adjust salary for FTE
+
     const effectiveAnnualSalary = annualSalary * fte;
-    
-    // Calculate current period amounts
-    const grossPay = effectiveAnnualSalary / periodsPerYear;
-    const annualTax = calculateTax(effectiveAnnualSalary, inputs.taxYear);
+    const hourlyRate = effectiveAnnualSalary / (52.18 * fullTimeHours * fte);
+
+    // Calculate leave hours taken this period
+    const leaveHoursTaken = inputs.leaveItems.reduce((sum, leave) => sum + leave.hours, 0);
+
+    // Calculate base hours (total hours minus leave hours)
+    const totalHoursForPeriod = (fullTimeHours * fte * payPeriodDays) / 7;
+    const basePayHours = Math.max(0, totalHoursForPeriod - leaveHoursTaken);
+    const basePayAmount = basePayHours * hourlyRate;
+
+    // Calculate additional earnings
+    const additionalEarningsTotal = inputs.additionalEarnings.reduce((sum, earning) => {
+      if (earning.hours && earning.rate) {
+        return sum + (earning.hours * earning.rate);
+      }
+      return sum + earning.amount;
+    }, 0);
+
+    // Gross pay = base pay + additional earnings
+    const grossPay = basePayAmount + additionalEarningsTotal;
+
+    // Calculate pre-tax deductions
+    const preTaxDeductionsTotal = inputs.preTaxDeductions.reduce((sum, ded) => sum + ded.amount, 0);
+
+    // Taxable income = gross - pre-tax deductions
+    const taxableIncome = grossPay - preTaxDeductionsTotal;
+
+    // Scale taxable income to annual for tax calculation
+    const annualTaxableIncome = taxableIncome * periodsPerYear;
+    const annualTax = calculateTax(annualTaxableIncome, inputs.taxYear);
     const taxPerPeriod = annualTax / periodsPerYear;
-    
+
     // Calculate Medicare charges
-    const annualMedicareLevy = calculateMedicareLevy(effectiveAnnualSalary, inputs.taxYear);
+    const annualMedicareLevy = calculateMedicareLevy(annualTaxableIncome, inputs.taxYear);
     const annualMedicareLevySurcharge = calculateMedicareLevySurcharge(
-      effectiveAnnualSalary, 
-      inputs.taxYear, 
+      annualTaxableIncome,
+      inputs.taxYear,
       inputs.hasPrivateHealthInsurance
     );
     const annualTotalMedicareCharges = annualMedicareLevy + annualMedicareLevySurcharge;
-    
+
     const medicareLevyPerPeriod = annualMedicareLevy / periodsPerYear;
     const medicareLevySurchargePerPeriod = annualMedicareLevySurcharge / periodsPerYear;
     const totalMedicareChargesPerPeriod = annualTotalMedicareCharges / periodsPerYear;
-    
-    const netPay = grossPay - taxPerPeriod - totalMedicareChargesPerPeriod;
-    
-    // Superannuation
+
+    // Calculate post-tax deductions
+    const postTaxDeductionsTotal = inputs.postTaxDeductions.reduce((sum, ded) => sum + ded.amount, 0);
+
+    // Net pay = gross - tax - medicare - post-tax deductions
+    const netPay = grossPay - taxPerPeriod - totalMedicareChargesPerPeriod - postTaxDeductionsTotal;
+
+    // Superannuation (on gross pay before deductions)
     const superRate = superRates[inputs.taxYear];
     const superannuation = grossPay * superRate;
-    
-    // Calculate hours worked this period
-    const hoursPerPeriod = (fullTimeHours * fte * payPeriodDays) / 7;
-    
-    // Annual leave accrual (20 days per year for full-time, pro-rated for part-time)
+
+    // Annual leave accrual
     const annualLeaveDaysPerYear = 20 * fte;
     const workingDaysPerYear = 260.87;
     const annualLeaveAccrualRate = annualLeaveDaysPerYear / workingDaysPerYear;
@@ -232,56 +339,59 @@ const PayslipCalculator: React.FC = () => {
     const annualLeaveAccrualDays = workingDaysThisPeriod * annualLeaveAccrualRate;
     const hoursPerDay = fullTimeHours / 5;
     const annualLeaveAccrualHours = annualLeaveAccrualDays * hoursPerDay;
-    
+
     // Calculate YTD figures
     const payDate = new Date(inputs.payDate);
     const employmentStart = new Date(inputs.employmentStartDate);
     const financialYearStart = new Date(payDate.getFullYear() - (payDate.getMonth() < 6 ? 1 : 0), 6, 1);
-    
+
     const ytdStartDate = employmentStart > financialYearStart ? employmentStart : financialYearStart;
-    
+
     const daysDiff = Math.floor((payDate.getTime() - ytdStartDate.getTime()) / (1000 * 60 * 60 * 24));
     const yearDays = 365.25;
-    
-    const ytdProportion = daysDiff / yearDays;
-    const ytdMaxGross = effectiveAnnualSalary * ytdProportion;
-    const ytdMaxTax = annualTax * ytdProportion;
-    const ytdMaxMedicareLevy = annualMedicareLevy * ytdProportion;
-    const ytdMaxMedicareLevySurcharge = annualMedicareLevySurcharge * ytdProportion;
-    const ytdMaxTotalMedicareCharges = annualTotalMedicareCharges * ytdProportion;
-    const ytdMaxNet = ytdMaxGross - ytdMaxTax - ytdMaxTotalMedicareCharges;
-    const ytdMaxSuper = ytdMaxGross * superRate;
-    
-    const periodsToDate = Math.floor(daysDiff / payPeriodDays) + 1;
-    
-    const ytdGross = Math.min(grossPay * periodsToDate, ytdMaxGross);
-    const ytdTax = Math.min(taxPerPeriod * periodsToDate, ytdMaxTax);
-    const ytdMedicareLevy = Math.min(medicareLevyPerPeriod * periodsToDate, ytdMaxMedicareLevy);
-    const ytdMedicareLevySurcharge = Math.min(medicareLevySurchargePerPeriod * periodsToDate, ytdMaxMedicareLevySurcharge);
-    const ytdTotalMedicareCharges = Math.min(totalMedicareChargesPerPeriod * periodsToDate, ytdMaxTotalMedicareCharges);
-    const ytdNet = Math.min(netPay * periodsToDate, ytdMaxNet);
-    const ytdSuper = Math.min(superannuation * periodsToDate, ytdMaxSuper);
 
-    const hourlyRate = effectiveAnnualSalary / (52.18 * fullTimeHours * fte);
+    const ytdProportion = daysDiff / yearDays;
+    const periodsToDate = Math.floor(daysDiff / payPeriodDays) + 1;
+
+    // YTD calculations
+    const ytdGross = grossPay * periodsToDate;
+    const ytdPreTaxDeductions = inputs.preTaxDeductions.reduce((sum, ded) =>
+      sum + (ded.ytdAmount || ded.amount * periodsToDate), 0);
+    const ytdTax = taxPerPeriod * periodsToDate;
+    const ytdMedicareLevy = medicareLevyPerPeriod * periodsToDate;
+    const ytdMedicareLevySurcharge = medicareLevySurchargePerPeriod * periodsToDate;
+    const ytdTotalMedicareCharges = totalMedicareChargesPerPeriod * periodsToDate;
+    const ytdPostTaxDeductions = inputs.postTaxDeductions.reduce((sum, ded) =>
+      sum + (ded.ytdAmount || ded.amount * periodsToDate), 0);
+    const ytdNet = netPay * periodsToDate;
+    const ytdSuper = superannuation * periodsToDate;
 
     setResults({
+      basePayHours,
+      basePayAmount,
+      additionalEarningsTotal,
       grossPay,
-      taxableIncome: grossPay,
+      preTaxDeductionsTotal,
+      taxableIncome,
       tax: taxPerPeriod,
       medicareLevy: medicareLevyPerPeriod,
       medicareLevySurcharge: medicareLevySurchargePerPeriod,
       totalMedicareCharges: totalMedicareChargesPerPeriod,
+      postTaxDeductionsTotal,
       netIncome: netPay,
       superannuation,
       annualLeaveAccrual: annualLeaveAccrualHours,
-      hoursWorked: hoursPerPeriod,
+      hoursWorked: basePayHours,
+      leaveHoursTaken,
       hourlyRate,
       ytd: {
         gross: ytdGross,
+        preTaxDeductions: ytdPreTaxDeductions,
         tax: ytdTax,
         medicareLevy: ytdMedicareLevy,
         medicareLevySurcharge: ytdMedicareLevySurcharge,
         totalMedicareCharges: ytdTotalMedicareCharges,
+        postTaxDeductions: ytdPostTaxDeductions,
         net: ytdNet,
         super: ytdSuper
       },
@@ -304,6 +414,304 @@ const PayslipCalculator: React.FC = () => {
     }));
   };
 
+  // ============ DYNAMIC LIST HANDLERS ============
+
+  const addPreTaxDeduction = () => {
+    const newDeduction: PreTaxDeduction = {
+      id: Date.now().toString(),
+      name: '',
+      amount: 0,
+      ytdAmount: 0
+    };
+    setInputs(prev => ({
+      ...prev,
+      preTaxDeductions: [...prev.preTaxDeductions, newDeduction]
+    }));
+  };
+
+  const updatePreTaxDeduction = (id: string, field: keyof PreTaxDeduction, value: string | number) => {
+    setInputs(prev => ({
+      ...prev,
+      preTaxDeductions: prev.preTaxDeductions.map(ded =>
+        ded.id === id ? { ...ded, [field]: value } : ded
+      )
+    }));
+  };
+
+  const removePreTaxDeduction = (id: string) => {
+    setInputs(prev => ({
+      ...prev,
+      preTaxDeductions: prev.preTaxDeductions.filter(ded => ded.id !== id)
+    }));
+  };
+
+  const addPostTaxDeduction = () => {
+    const newDeduction: PostTaxDeduction = {
+      id: Date.now().toString(),
+      name: '',
+      amount: 0,
+      ytdAmount: 0
+    };
+    setInputs(prev => ({
+      ...prev,
+      postTaxDeductions: [...prev.postTaxDeductions, newDeduction]
+    }));
+  };
+
+  const updatePostTaxDeduction = (id: string, field: keyof PostTaxDeduction, value: string | number) => {
+    setInputs(prev => ({
+      ...prev,
+      postTaxDeductions: prev.postTaxDeductions.map(ded =>
+        ded.id === id ? { ...ded, [field]: value } : ded
+      )
+    }));
+  };
+
+  const removePostTaxDeduction = (id: string) => {
+    setInputs(prev => ({
+      ...prev,
+      postTaxDeductions: prev.postTaxDeductions.filter(ded => ded.id !== id)
+    }));
+  };
+
+  const addAdditionalEarning = () => {
+    const newEarning: AdditionalEarning = {
+      id: Date.now().toString(),
+      name: '',
+      amount: 0,
+      hours: 0,
+      rate: 0
+    };
+    setInputs(prev => ({
+      ...prev,
+      additionalEarnings: [...prev.additionalEarnings, newEarning]
+    }));
+  };
+
+  const updateAdditionalEarning = (id: string, field: keyof AdditionalEarning, value: string | number) => {
+    setInputs(prev => ({
+      ...prev,
+      additionalEarnings: prev.additionalEarnings.map(earning =>
+        earning.id === id ? { ...earning, [field]: value } : earning
+      )
+    }));
+  };
+
+  const removeAdditionalEarning = (id: string) => {
+    setInputs(prev => ({
+      ...prev,
+      additionalEarnings: prev.additionalEarnings.filter(earning => earning.id !== id)
+    }));
+  };
+
+  const addLeaveItem = () => {
+    const newLeave: LeaveItem = {
+      id: Date.now().toString(),
+      type: 'annual',
+      hours: 0
+    };
+    setInputs(prev => ({
+      ...prev,
+      leaveItems: [...prev.leaveItems, newLeave]
+    }));
+  };
+
+  const updateLeaveItem = (id: string, field: keyof LeaveItem, value: string | number) => {
+    setInputs(prev => ({
+      ...prev,
+      leaveItems: prev.leaveItems.map(leave =>
+        leave.id === id ? { ...leave, [field]: value } : leave
+      )
+    }));
+  };
+
+  const removeLeaveItem = (id: string) => {
+    setInputs(prev => ({
+      ...prev,
+      leaveItems: prev.leaveItems.filter(leave => leave.id !== id)
+    }));
+  };
+
+  // ============ PDF GENERATION ============
+
+  const generatePDF = () => {
+    if (!results) return;
+
+    const numberOfPayslips = parseInt(inputs.numberOfPayslips) || 1;
+    const doc = new jsPDF();
+
+    for (let i = 0; i < numberOfPayslips; i++) {
+      if (i > 0) {
+        doc.addPage();
+      }
+
+      // Calculate dates for this payslip
+      const basePayDate = new Date(inputs.payDate);
+      const basePeriodEndDate = new Date(inputs.periodEndDate);
+      const payPeriodDays = getPayPeriodDays(inputs.payFrequency);
+
+      const currentPayDate = new Date(basePayDate);
+      currentPayDate.setDate(currentPayDate.getDate() + (i * payPeriodDays));
+
+      const currentPeriodEndDate = new Date(basePeriodEndDate);
+      currentPeriodEndDate.setDate(currentPeriodEndDate.getDate() + (i * payPeriodDays));
+
+      // Header
+      doc.setFontSize(18);
+      doc.setFont('helvetica', 'bold');
+      doc.text('PAYSLIP', 105, 20, { align: 'center' });
+
+      // Company and Employee Info
+      doc.setFontSize(10);
+      doc.setFont('helvetica', 'normal');
+
+      let yPos = 35;
+
+      if (inputs.companyName) {
+        doc.setFont('helvetica', 'bold');
+        doc.text(inputs.companyName, 20, yPos);
+        yPos += 7;
+      }
+
+      if (inputs.employeeName || inputs.employeeNumber) {
+        doc.setFont('helvetica', 'normal');
+        if (inputs.employeeName) {
+          doc.text(`Employee: ${inputs.employeeName}`, 20, yPos);
+          yPos += 5;
+        }
+        if (inputs.employeeNumber) {
+          doc.text(`Employee #: ${inputs.employeeNumber}`, 20, yPos);
+          yPos += 5;
+        }
+      }
+
+      yPos += 3;
+      doc.text(`Pay Date: ${currentPayDate.toLocaleDateString('en-AU')}`, 20, yPos);
+      yPos += 5;
+      doc.text(`Period End: ${currentPeriodEndDate.toLocaleDateString('en-AU')}`, 20, yPos);
+      yPos += 5;
+      doc.text(`Pay Frequency: ${inputs.payFrequency.charAt(0).toUpperCase() + inputs.payFrequency.slice(1)}`, 20, yPos);
+      yPos += 10;
+
+      // Earnings Section
+      const earningsData = [];
+
+      // Base pay
+      earningsData.push([
+        inputs.basePayName,
+        formatHours(results.basePayHours),
+        formatCurrency(results.hourlyRate),
+        formatCurrency(results.basePayAmount)
+      ]);
+
+      // Additional earnings
+      inputs.additionalEarnings.forEach(earning => {
+        const earningAmount = earning.hours && earning.rate
+          ? earning.hours * earning.rate
+          : earning.amount;
+        earningsData.push([
+          earning.name,
+          earning.hours ? formatHours(earning.hours) : '-',
+          earning.rate ? formatCurrency(earning.rate) : '-',
+          formatCurrency(earningAmount)
+        ]);
+      });
+
+      autoTable(doc, {
+        startY: yPos,
+        head: [['Earnings', 'Hours', 'Rate', 'Amount']],
+        body: earningsData,
+        theme: 'grid',
+        headStyles: { fillColor: [66, 139, 202], textColor: 255, fontStyle: 'bold' },
+        footStyles: { fillColor: [245, 245, 245], textColor: 0, fontStyle: 'bold' },
+        foot: [['Gross Pay', '', '', formatCurrency(results.grossPay)]],
+      });
+
+      yPos = (doc as any).lastAutoTable.finalY + 10;
+
+      // Deductions Section
+      const deductionsData = [];
+
+      // Pre-tax deductions
+      inputs.preTaxDeductions.forEach(ded => {
+        deductionsData.push([ded.name + ' (Pre-tax)', formatCurrency(ded.amount), formatCurrency(ded.ytdAmount)]);
+      });
+
+      // Tax
+      deductionsData.push(['Income Tax', formatCurrency(results.tax), formatCurrency(results.ytd.tax)]);
+      deductionsData.push(['Medicare Levy', formatCurrency(results.medicareLevy), formatCurrency(results.ytd.medicareLevy)]);
+
+      if (results.medicareLevySurcharge > 0) {
+        deductionsData.push(['Medicare Levy Surcharge', formatCurrency(results.medicareLevySurcharge), formatCurrency(results.ytd.medicareLevySurcharge)]);
+      }
+
+      // Post-tax deductions
+      inputs.postTaxDeductions.forEach(ded => {
+        deductionsData.push([ded.name, formatCurrency(ded.amount), formatCurrency(ded.ytdAmount)]);
+      });
+
+      autoTable(doc, {
+        startY: yPos,
+        head: [['Deductions', 'This Period', 'YTD']],
+        body: deductionsData,
+        theme: 'grid',
+        headStyles: { fillColor: [217, 83, 79], textColor: 255, fontStyle: 'bold' },
+      });
+
+      yPos = (doc as any).lastAutoTable.finalY + 10;
+
+      // Summary Section
+      const summaryData = [
+        ['Gross Pay', formatCurrency(results.grossPay), formatCurrency(results.ytd.gross)],
+        ['Total Deductions', formatCurrency(results.preTaxDeductionsTotal + results.tax + results.totalMedicareCharges + results.postTaxDeductionsTotal), formatCurrency(results.ytd.preTaxDeductions + results.ytd.tax + results.ytd.totalMedicareCharges + results.ytd.postTaxDeductions)],
+        ['Net Pay', formatCurrency(results.netIncome), formatCurrency(results.ytd.net)],
+        ['Superannuation', formatCurrency(results.superannuation), formatCurrency(results.ytd.super)]
+      ];
+
+      autoTable(doc, {
+        startY: yPos,
+        head: [['Summary', 'This Period', 'YTD']],
+        body: summaryData,
+        theme: 'grid',
+        headStyles: { fillColor: [92, 184, 92], textColor: 255, fontStyle: 'bold' },
+        footStyles: { fillColor: [245, 245, 245], textColor: 0, fontStyle: 'bold' },
+      });
+
+      yPos = (doc as any).lastAutoTable.finalY + 10;
+
+      // Leave Balance Section
+      if (inputs.leaveItems.length > 0) {
+        const leaveData = inputs.leaveItems.map(leave => [
+          leave.type.charAt(0).toUpperCase() + leave.type.slice(1) + ' Leave',
+          formatHours(leave.hours) + ' hrs'
+        ]);
+
+        autoTable(doc, {
+          startY: yPos,
+          head: [['Leave Taken', 'Hours']],
+          body: leaveData,
+          theme: 'grid',
+          headStyles: { fillColor: [240, 173, 78], textColor: 255, fontStyle: 'bold' },
+        });
+
+        yPos = (doc as any).lastAutoTable.finalY + 5;
+      }
+
+      // Annual Leave Accrual
+      doc.setFontSize(9);
+      doc.text(`Annual Leave Accrued This Period: ${formatHours(results.annualLeaveAccrual)} hrs`, 20, yPos + 5);
+    }
+
+    // Save PDF
+    const filename = numberOfPayslips > 1
+      ? `payslips_${inputs.payDate}_to_${numberOfPayslips}_periods.pdf`
+      : `payslip_${inputs.payDate}.pdf`;
+
+    doc.save(filename);
+  };
+
+  // ============ FORMATTING FUNCTIONS ============
+
   const formatCurrency = (amount: number): string => {
     return new Intl.NumberFormat('en-AU', {
       style: 'currency',
@@ -320,28 +728,112 @@ const PayslipCalculator: React.FC = () => {
     return rate?.toFixed(4) || '0.0000';
   };
 
+  // ============ RENDER ============
+
   return (
     <div className="max-w-7xl mx-auto p-6 bg-white">
-      <div className="flex items-center gap-3 mb-8">
-        <Calculator className="w-8 h-8 text-blue-600" />
-        <h1 className="text-3xl font-bold text-gray-900">Australian Payslip Calculator</h1>
+      <div className="flex items-center justify-between mb-8">
+        <div className="flex items-center gap-3">
+          <Calculator className="w-8 h-8 text-blue-600" />
+          <h1 className="text-3xl font-bold text-gray-900">Australian Payslip Calculator</h1>
+        </div>
+
+        {results && (
+          <button
+            onClick={generatePDF}
+            className="flex items-center gap-2 px-6 py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
+          >
+            <Download className="w-5 h-5" />
+            Generate PDF
+          </button>
+        )}
       </div>
 
       <div className="grid grid-cols-1 xl:grid-cols-3 gap-8">
         {/* Input Section */}
-        <div className="xl:col-span-1">
+        <div className="xl:col-span-1 space-y-6">
+          {/* Basic Details */}
           <div className="bg-gray-50 p-6 rounded-lg">
             <h2 className="text-xl font-semibold mb-4 flex items-center gap-2">
               <FileText className="w-5 h-5" />
-              Input Details
+              Basic Details
             </h2>
-            
+
             <div className="space-y-4">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  Company Name (for PDF)
+                </label>
+                <input
+                  type="text"
+                  value={inputs.companyName}
+                  onChange={(e) => handleInputChange('companyName', e.target.value)}
+                  placeholder="Acme Corporation"
+                  className="w-full p-3 border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                />
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  Employee Name (for PDF)
+                </label>
+                <input
+                  type="text"
+                  value={inputs.employeeName}
+                  onChange={(e) => handleInputChange('employeeName', e.target.value)}
+                  placeholder="John Smith"
+                  className="w-full p-3 border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                />
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  Employee Number (for PDF)
+                </label>
+                <input
+                  type="text"
+                  value={inputs.employeeNumber}
+                  onChange={(e) => handleInputChange('employeeNumber', e.target.value)}
+                  placeholder="EMP001"
+                  className="w-full p-3 border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                />
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  Base Pay / Earnings Name
+                </label>
+                <input
+                  type="text"
+                  value={inputs.basePayName}
+                  onChange={(e) => handleInputChange('basePayName', e.target.value)}
+                  placeholder="Ordinary Hours"
+                  className="w-full p-3 border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                />
+                <p className="text-xs text-gray-500 mt-1">
+                  e.g., "Workers Compensation", "Maternity Leave Pay"
+                </p>
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  Number of Consecutive Payslips to Generate
+                </label>
+                <input
+                  type="number"
+                  min="1"
+                  max="52"
+                  value={inputs.numberOfPayslips}
+                  onChange={(e) => handleInputChange('numberOfPayslips', e.target.value)}
+                  className="w-full p-3 border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                />
+              </div>
+
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">
                   Tax Year
                 </label>
-                <select 
+                <select
                   value={inputs.taxYear}
                   onChange={(e) => handleInputChange('taxYear', e.target.value)}
                   className="w-full p-3 border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
@@ -375,7 +867,7 @@ const PayslipCalculator: React.FC = () => {
                 <label className="block text-sm font-medium text-gray-700 mb-1">
                   Pay Frequency
                 </label>
-                <select 
+                <select
                   value={inputs.payFrequency}
                   onChange={(e) => handleInputChange('payFrequency', e.target.value)}
                   className="w-full p-3 border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
@@ -476,6 +968,275 @@ const PayslipCalculator: React.FC = () => {
               </div>
             </div>
           </div>
+
+          {/* Pre-Tax Deductions */}
+          <div className="bg-orange-50 p-6 rounded-lg">
+            <div className="flex items-center justify-between mb-4">
+              <h2 className="text-xl font-semibold flex items-center gap-2">
+                <DollarSign className="w-5 h-5" />
+                Pre-Tax Deductions
+              </h2>
+              <button
+                onClick={addPreTaxDeduction}
+                className="flex items-center gap-1 px-3 py-1 bg-orange-600 text-white text-sm rounded hover:bg-orange-700"
+              >
+                <Plus className="w-4 h-4" />
+                Add
+              </button>
+            </div>
+
+            <div className="space-y-3">
+              {inputs.preTaxDeductions.length === 0 && (
+                <p className="text-sm text-gray-500 italic">No pre-tax deductions added</p>
+              )}
+
+              {inputs.preTaxDeductions.map(deduction => (
+                <div key={deduction.id} className="bg-white p-3 rounded-md border border-orange-200">
+                  <div className="flex justify-between items-start mb-2">
+                    <input
+                      type="text"
+                      value={deduction.name}
+                      onChange={(e) => updatePreTaxDeduction(deduction.id, 'name', e.target.value)}
+                      placeholder="e.g., Salary Sacrifice, Novated Lease"
+                      className="flex-1 p-2 border border-gray-300 rounded text-sm"
+                    />
+                    <button
+                      onClick={() => removePreTaxDeduction(deduction.id)}
+                      className="ml-2 p-2 text-red-600 hover:bg-red-50 rounded"
+                    >
+                      <Trash2 className="w-4 h-4" />
+                    </button>
+                  </div>
+                  <div className="grid grid-cols-2 gap-2">
+                    <div>
+                      <label className="text-xs text-gray-600">This Period</label>
+                      <input
+                        type="number"
+                        step="0.01"
+                        value={deduction.amount}
+                        onChange={(e) => updatePreTaxDeduction(deduction.id, 'amount', parseFloat(e.target.value) || 0)}
+                        className="w-full p-2 border border-gray-300 rounded text-sm"
+                      />
+                    </div>
+                    <div>
+                      <label className="text-xs text-gray-600">YTD Amount</label>
+                      <input
+                        type="number"
+                        step="0.01"
+                        value={deduction.ytdAmount}
+                        onChange={(e) => updatePreTaxDeduction(deduction.id, 'ytdAmount', parseFloat(e.target.value) || 0)}
+                        className="w-full p-2 border border-gray-300 rounded text-sm"
+                      />
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          {/* Post-Tax Deductions */}
+          <div className="bg-red-50 p-6 rounded-lg">
+            <div className="flex items-center justify-between mb-4">
+              <h2 className="text-xl font-semibold flex items-center gap-2">
+                <DollarSign className="w-5 h-5" />
+                Post-Tax Deductions
+              </h2>
+              <button
+                onClick={addPostTaxDeduction}
+                className="flex items-center gap-1 px-3 py-1 bg-red-600 text-white text-sm rounded hover:bg-red-700"
+              >
+                <Plus className="w-4 h-4" />
+                Add
+              </button>
+            </div>
+
+            <div className="space-y-3">
+              {inputs.postTaxDeductions.length === 0 && (
+                <p className="text-sm text-gray-500 italic">No post-tax deductions added</p>
+              )}
+
+              {inputs.postTaxDeductions.map(deduction => (
+                <div key={deduction.id} className="bg-white p-3 rounded-md border border-red-200">
+                  <div className="flex justify-between items-start mb-2">
+                    <input
+                      type="text"
+                      value={deduction.name}
+                      onChange={(e) => updatePostTaxDeduction(deduction.id, 'name', e.target.value)}
+                      placeholder="e.g., Novated Lease Post-tax"
+                      className="flex-1 p-2 border border-gray-300 rounded text-sm"
+                    />
+                    <button
+                      onClick={() => removePostTaxDeduction(deduction.id)}
+                      className="ml-2 p-2 text-red-600 hover:bg-red-50 rounded"
+                    >
+                      <Trash2 className="w-4 h-4" />
+                    </button>
+                  </div>
+                  <div className="grid grid-cols-2 gap-2">
+                    <div>
+                      <label className="text-xs text-gray-600">This Period</label>
+                      <input
+                        type="number"
+                        step="0.01"
+                        value={deduction.amount}
+                        onChange={(e) => updatePostTaxDeduction(deduction.id, 'amount', parseFloat(e.target.value) || 0)}
+                        className="w-full p-2 border border-gray-300 rounded text-sm"
+                      />
+                    </div>
+                    <div>
+                      <label className="text-xs text-gray-600">YTD Amount</label>
+                      <input
+                        type="number"
+                        step="0.01"
+                        value={deduction.ytdAmount}
+                        onChange={(e) => updatePostTaxDeduction(deduction.id, 'ytdAmount', parseFloat(e.target.value) || 0)}
+                        className="w-full p-2 border border-gray-300 rounded text-sm"
+                      />
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          {/* Additional Earnings */}
+          <div className="bg-green-50 p-6 rounded-lg">
+            <div className="flex items-center justify-between mb-4">
+              <h2 className="text-xl font-semibold flex items-center gap-2">
+                <DollarSign className="w-5 h-5" />
+                Additional Earnings
+              </h2>
+              <button
+                onClick={addAdditionalEarning}
+                className="flex items-center gap-1 px-3 py-1 bg-green-600 text-white text-sm rounded hover:bg-green-700"
+              >
+                <Plus className="w-4 h-4" />
+                Add
+              </button>
+            </div>
+
+            <div className="space-y-3">
+              {inputs.additionalEarnings.length === 0 && (
+                <p className="text-sm text-gray-500 italic">No additional earnings added</p>
+              )}
+
+              {inputs.additionalEarnings.map(earning => (
+                <div key={earning.id} className="bg-white p-3 rounded-md border border-green-200">
+                  <div className="flex justify-between items-start mb-2">
+                    <input
+                      type="text"
+                      value={earning.name}
+                      onChange={(e) => updateAdditionalEarning(earning.id, 'name', e.target.value)}
+                      placeholder="e.g., Overtime, Bonus, Commission"
+                      className="flex-1 p-2 border border-gray-300 rounded text-sm"
+                    />
+                    <button
+                      onClick={() => removeAdditionalEarning(earning.id)}
+                      className="ml-2 p-2 text-red-600 hover:bg-red-50 rounded"
+                    >
+                      <Trash2 className="w-4 h-4" />
+                    </button>
+                  </div>
+                  <div className="grid grid-cols-3 gap-2">
+                    <div>
+                      <label className="text-xs text-gray-600">Hours</label>
+                      <input
+                        type="number"
+                        step="0.01"
+                        value={earning.hours || ''}
+                        onChange={(e) => updateAdditionalEarning(earning.id, 'hours', parseFloat(e.target.value) || 0)}
+                        placeholder="0"
+                        className="w-full p-2 border border-gray-300 rounded text-sm"
+                      />
+                    </div>
+                    <div>
+                      <label className="text-xs text-gray-600">Rate</label>
+                      <input
+                        type="number"
+                        step="0.01"
+                        value={earning.rate || ''}
+                        onChange={(e) => updateAdditionalEarning(earning.id, 'rate', parseFloat(e.target.value) || 0)}
+                        placeholder="0"
+                        className="w-full p-2 border border-gray-300 rounded text-sm"
+                      />
+                    </div>
+                    <div>
+                      <label className="text-xs text-gray-600">Or Amount</label>
+                      <input
+                        type="number"
+                        step="0.01"
+                        value={earning.amount}
+                        onChange={(e) => updateAdditionalEarning(earning.id, 'amount', parseFloat(e.target.value) || 0)}
+                        placeholder="0"
+                        className="w-full p-2 border border-gray-300 rounded text-sm"
+                      />
+                    </div>
+                  </div>
+                  <p className="text-xs text-gray-500 mt-1">Use Hours × Rate OR Amount</p>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          {/* Leave Items */}
+          <div className="bg-purple-50 p-6 rounded-lg">
+            <div className="flex items-center justify-between mb-4">
+              <h2 className="text-xl font-semibold flex items-center gap-2">
+                <Calendar className="w-5 h-5" />
+                Leave Taken This Period
+              </h2>
+              <button
+                onClick={addLeaveItem}
+                className="flex items-center gap-1 px-3 py-1 bg-purple-600 text-white text-sm rounded hover:bg-purple-700"
+              >
+                <Plus className="w-4 h-4" />
+                Add
+              </button>
+            </div>
+
+            <div className="space-y-3">
+              {inputs.leaveItems.length === 0 && (
+                <p className="text-sm text-gray-500 italic">No leave taken this period</p>
+              )}
+
+              {inputs.leaveItems.map(leave => (
+                <div key={leave.id} className="bg-white p-3 rounded-md border border-purple-200">
+                  <div className="flex justify-between items-start gap-2">
+                    <select
+                      value={leave.type}
+                      onChange={(e) => updateLeaveItem(leave.id, 'type', e.target.value)}
+                      className="flex-1 p-2 border border-gray-300 rounded text-sm"
+                    >
+                      <option value="annual">Annual Leave</option>
+                      <option value="sick">Sick Leave</option>
+                      <option value="personal">Personal Leave</option>
+                      <option value="unpaid">Unpaid Leave</option>
+                    </select>
+                    <input
+                      type="number"
+                      step="0.01"
+                      value={leave.hours}
+                      onChange={(e) => updateLeaveItem(leave.id, 'hours', parseFloat(e.target.value) || 0)}
+                      placeholder="Hours"
+                      className="w-24 p-2 border border-gray-300 rounded text-sm"
+                    />
+                    <button
+                      onClick={() => removeLeaveItem(leave.id)}
+                      className="p-2 text-red-600 hover:bg-red-50 rounded"
+                    >
+                      <Trash2 className="w-4 h-4" />
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
+
+            {inputs.leaveItems.length > 0 && (
+              <p className="text-xs text-gray-500 mt-3">
+                Leave hours will be subtracted from {inputs.basePayName} for this period
+              </p>
+            )}
+          </div>
         </div>
 
         {/* Results Section */}
@@ -492,22 +1253,71 @@ const PayslipCalculator: React.FC = () => {
                 <div>
                   <h3 className="text-lg font-medium text-gray-900 mb-3">This Pay Period</h3>
                   <div className="bg-white p-4 rounded-md space-y-2">
-                    <div className="flex justify-between">
-                      <span className="text-gray-600">Hours Worked:</span>
-                      <span className="font-medium">{formatHours(results.hoursWorked)} hrs</span>
+                    {/* Earnings */}
+                    <div className="border-b pb-2 mb-2">
+                      <p className="text-xs font-semibold text-gray-500 uppercase">Earnings</p>
                     </div>
+
                     <div className="flex justify-between">
-                      <span className="text-gray-600">Hourly Rate:</span>
-                      <span className="font-medium">{formatCurrency(results.hourlyRate)}</span>
+                      <span className="text-gray-600">{inputs.basePayName}:</span>
+                      <span className="font-medium">{formatHours(results.basePayHours)} hrs @ {formatCurrency(results.hourlyRate)}</span>
                     </div>
+
                     <div className="flex justify-between">
-                      <span className="text-gray-600">Gross Pay:</span>
-                      <span className="font-medium">{formatCurrency(results.grossPay)}</span>
+                      <span className="text-gray-600"></span>
+                      <span className="font-medium">{formatCurrency(results.basePayAmount)}</span>
                     </div>
-                    <div className="flex justify-between">
-                      <span className="text-gray-600">Taxable Income:</span>
-                      <span className="font-medium">{formatCurrency(results.taxableIncome)}</span>
+
+                    {inputs.additionalEarnings.map(earning => {
+                      const earningAmount = earning.hours && earning.rate
+                        ? earning.hours * earning.rate
+                        : earning.amount;
+                      return (
+                        <div key={earning.id} className="flex justify-between text-sm">
+                          <span className="text-gray-600">{earning.name}:</span>
+                          <span className="font-medium text-green-600">+{formatCurrency(earningAmount)}</span>
+                        </div>
+                      );
+                    })}
+
+                    {results.additionalEarningsTotal > 0 && (
+                      <div className="flex justify-between border-t pt-2">
+                        <span className="text-gray-600">Additional Earnings Total:</span>
+                        <span className="font-medium text-green-600">+{formatCurrency(results.additionalEarningsTotal)}</span>
+                      </div>
+                    )}
+
+                    <div className="flex justify-between border-t pt-2">
+                      <span className="text-gray-900 font-semibold">Gross Pay:</span>
+                      <span className="font-bold">{formatCurrency(results.grossPay)}</span>
                     </div>
+
+                    {/* Deductions */}
+                    <div className="border-b pb-2 mb-2 mt-4">
+                      <p className="text-xs font-semibold text-gray-500 uppercase">Deductions</p>
+                    </div>
+
+                    {inputs.preTaxDeductions.map(ded => (
+                      <div key={ded.id} className="flex justify-between text-sm">
+                        <span className="text-gray-600">{ded.name} (Pre-tax):</span>
+                        <span className="font-medium text-red-600">-{formatCurrency(ded.amount)}</span>
+                      </div>
+                    ))}
+
+                    {results.preTaxDeductionsTotal > 0 && (
+                      <div className="flex justify-between">
+                        <span className="text-gray-600">Pre-Tax Deductions Total:</span>
+                        <span className="font-medium text-red-600">-{formatCurrency(results.preTaxDeductionsTotal)}</span>
+                      </div>
+                    )}
+
+                    {results.preTaxDeductionsTotal > 0 && (
+                      <div className="flex justify-between border-t pt-2">
+                        <span className="text-gray-600">Taxable Income:</span>
+                        <span className="font-medium">{formatCurrency(results.taxableIncome)}</span>
+                      </div>
+                    )}
+
                     <div className="flex justify-between">
                       <span className="text-gray-600">Income Tax:</span>
                       <span className="font-medium text-red-600">-{formatCurrency(results.tax)}</span>
@@ -522,11 +1332,20 @@ const PayslipCalculator: React.FC = () => {
                         <span className="font-medium text-red-600">-{formatCurrency(results.medicareLevySurcharge)}</span>
                       </div>
                     )}
-                    <div className="flex justify-between border-t pt-2">
+
+                    {inputs.postTaxDeductions.map(ded => (
+                      <div key={ded.id} className="flex justify-between text-sm">
+                        <span className="text-gray-600">{ded.name}:</span>
+                        <span className="font-medium text-red-600">-{formatCurrency(ded.amount)}</span>
+                      </div>
+                    ))}
+
+                    <div className="flex justify-between border-t pt-2 mt-2">
                       <span className="text-gray-900 font-semibold">Net Income:</span>
                       <span className="font-bold text-green-600">{formatCurrency(results.netIncome)}</span>
                     </div>
-                    <div className="flex justify-between">
+
+                    <div className="flex justify-between border-t pt-2 mt-2">
                       <span className="text-gray-600">Superannuation ({(superRates[inputs.taxYear] * 100).toFixed(1)}%):</span>
                       <span className="font-medium">{formatCurrency(results.superannuation)}</span>
                     </div>
@@ -534,6 +1353,13 @@ const PayslipCalculator: React.FC = () => {
                       <span className="text-gray-600">Annual Leave Accrual:</span>
                       <span className="font-medium">{formatHours(results.annualLeaveAccrual)} hrs</span>
                     </div>
+
+                    {results.leaveHoursTaken > 0 && (
+                      <div className="flex justify-between border-t pt-2 mt-2">
+                        <span className="text-gray-600">Leave Hours Taken:</span>
+                        <span className="font-medium text-orange-600">{formatHours(results.leaveHoursTaken)} hrs</span>
+                      </div>
+                    )}
                   </div>
                 </div>
 
@@ -545,6 +1371,12 @@ const PayslipCalculator: React.FC = () => {
                       <span className="text-gray-600">YTD Gross:</span>
                       <span className="font-medium">{formatCurrency(results.ytd.gross)}</span>
                     </div>
+                    {results.ytd.preTaxDeductions > 0 && (
+                      <div className="flex justify-between">
+                        <span className="text-gray-600">YTD Pre-Tax Deductions:</span>
+                        <span className="font-medium text-red-600">-{formatCurrency(results.ytd.preTaxDeductions)}</span>
+                      </div>
+                    )}
                     <div className="flex justify-between">
                       <span className="text-gray-600">YTD Income Tax:</span>
                       <span className="font-medium text-red-600">-{formatCurrency(results.ytd.tax)}</span>
@@ -559,11 +1391,17 @@ const PayslipCalculator: React.FC = () => {
                         <span className="font-medium text-red-600">-{formatCurrency(results.ytd.medicareLevySurcharge)}</span>
                       </div>
                     )}
-                    <div className="flex justify-between">
-                      <span className="text-gray-600">YTD Net:</span>
+                    {results.ytd.postTaxDeductions > 0 && (
+                      <div className="flex justify-between">
+                        <span className="text-gray-600">YTD Post-Tax Deductions:</span>
+                        <span className="font-medium text-red-600">-{formatCurrency(results.ytd.postTaxDeductions)}</span>
+                      </div>
+                    )}
+                    <div className="flex justify-between border-t pt-2">
+                      <span className="text-gray-600 font-semibold">YTD Net:</span>
                       <span className="font-medium text-green-600">{formatCurrency(results.ytd.net)}</span>
                     </div>
-                    <div className="flex justify-between">
+                    <div className="flex justify-between border-t pt-2">
                       <span className="text-gray-600">YTD Super:</span>
                       <span className="font-medium">{formatCurrency(results.ytd.super)}</span>
                     </div>
@@ -618,6 +1456,9 @@ const PayslipCalculator: React.FC = () => {
                 <p>• Super at {(superRates[inputs.taxYear] * 100).toFixed(1)}% ({inputs.taxYear} rate)</p>
                 <p>• Annual leave: 20 days/year (full-time), pro-rated for part-time</p>
                 <p>• FTE of {formatRate(results.fte)} = {formatHours(parseFloat(inputs.fullTimeHours) * results.fte)} hours/week</p>
+                {results.leaveHoursTaken > 0 && (
+                  <p className="text-orange-600 font-medium">• Leave hours taken ({formatHours(results.leaveHoursTaken)} hrs) subtracted from {inputs.basePayName}</p>
+                )}
               </div>
             )}
           </div>
