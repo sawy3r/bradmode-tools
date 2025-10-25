@@ -587,6 +587,814 @@ const PayslipCalculator: React.FC = () => {
 
   // ============ PDF GENERATION ============
 
+  // Helper function to mask bank account (show last 4 digits)
+  const maskBankAccount = (account: string): string => {
+    if (!account || account.length < 4) return account;
+    return '*'.repeat(account.length - 4) + account.slice(-4);
+  };
+
+  // Xero-like Template (Modern with gray highlights)
+  const generateXeroLikePDF = (doc: jsPDFWithAutoTable, currentPayDate: Date, currentPeriodEndDate: Date) => {
+    if (!results) return 0;
+
+    let yPos = 20;
+
+    // Employee Name and Address (left side)
+    doc.setFontSize(10);
+    doc.setFont('helvetica', 'bold');
+    if (inputs.employeeName) {
+      doc.text(inputs.employeeName, 20, yPos);
+      yPos += 5;
+    }
+    doc.setFont('helvetica', 'normal');
+    if (inputs.employeeAddress) {
+      const addressLines = inputs.employeeAddress.split(',');
+      addressLines.forEach(line => {
+        doc.text(line.trim(), 20, yPos);
+        yPos += 4;
+      });
+    }
+
+    // Company Details (right side in gray box)
+    doc.setFillColor(240, 240, 240);
+    doc.rect(120, 15, 70, 35, 'F');
+    doc.setFontSize(9);
+    doc.setFont('helvetica', 'bold');
+    doc.text('PAID BY', 125, 20);
+    doc.setFont('helvetica', 'normal');
+    yPos = 25;
+    if (inputs.companyName) {
+      doc.text(inputs.companyName, 125, yPos);
+      yPos += 4;
+    }
+    if (inputs.companyAddress) {
+      const companyAddrLines = inputs.companyAddress.split(',');
+      companyAddrLines.forEach(line => {
+        doc.text(line.trim(), 125, yPos);
+        yPos += 4;
+      });
+    }
+    if (inputs.companyABN) {
+      doc.text(`ABN ${inputs.companyABN}`, 125, yPos);
+    }
+
+    // Employment Details box
+    yPos = 60;
+    doc.setFillColor(240, 240, 240);
+    doc.rect(120, yPos, 70, 20, 'F');
+    doc.setFont('helvetica', 'bold');
+    doc.text('EMPLOYMENT DETAILS', 125, yPos + 5);
+    doc.setFont('helvetica', 'normal');
+    doc.setFontSize(8);
+    doc.text(`Pay Frequency: ${inputs.payFrequency.charAt(0).toUpperCase() + inputs.payFrequency.slice(1)}`, 125, yPos + 10);
+    doc.text(`Annual Salary: ${formatCurrency(parseFloat(inputs.annualSalary))}`, 125, yPos + 15);
+
+    // Pay Period Summary bar
+    yPos = 85;
+    doc.setFillColor(220, 220, 220);
+    doc.rect(20, yPos, 170, 8, 'F');
+    doc.setFontSize(9);
+    doc.setFont('helvetica', 'normal');
+    doc.text(`Pay Period: ${currentPayDate.toLocaleDateString('en-AU')} - ${currentPeriodEndDate.toLocaleDateString('en-AU')}`, 22, yPos + 5.5);
+    doc.text(`Payment Date: ${currentPayDate.toLocaleDateString('en-AU')}`, 90, yPos + 5.5);
+    doc.setFont('helvetica', 'bold');
+    doc.text(`Total Earnings: ${formatCurrency(results.grossPay)}`, 130, yPos + 5.5);
+    doc.text(`Net Pay: ${formatCurrency(results.netIncome)}`, 165, yPos + 5.5);
+
+    yPos += 15;
+
+    // Salary & Wages Section
+    const salaryData: string[][] = [];
+    salaryData.push([
+      inputs.basePayName,
+      formatHours(results.basePayHours),
+      formatCurrency(results.hourlyRate),
+      formatCurrency(results.basePayAmount),
+      formatCurrency(results.ytd.gross)
+    ]);
+
+    inputs.additionalEarnings.forEach(earning => {
+      const earningAmount = earning.hours && earning.rate ? earning.hours * earning.rate : earning.amount;
+      salaryData.push([
+        earning.name,
+        earning.hours ? formatHours(earning.hours) : '',
+        earning.rate ? formatCurrency(earning.rate) : '',
+        formatCurrency(earningAmount),
+        formatCurrency(earningAmount)
+      ]);
+    });
+
+    if (inputs.leaveItems.length > 0) {
+      inputs.leaveItems.forEach(leave => {
+        salaryData.push([
+          `${leave.type.charAt(0).toUpperCase() + leave.type.slice(1)} Leave`,
+          formatHours(leave.hours),
+          formatCurrency(0),
+          formatCurrency(0),
+          formatCurrency(0)
+        ]);
+      });
+    }
+
+    autoTable(doc, {
+      startY: yPos,
+      head: [['SALARY & WAGES', '', 'RATE', 'THIS PAY', 'YTD']],
+      body: salaryData,
+      foot: [['', '', 'TOTAL', formatCurrency(results.grossPay), formatCurrency(results.ytd.gross)]],
+      theme: 'plain',
+      headStyles: { fillColor: [255, 255, 255], textColor: 0, fontStyle: 'bold', fontSize: 9 },
+      footStyles: { fillColor: [240, 240, 240], textColor: 0, fontStyle: 'bold' },
+      styles: { fontSize: 9, cellPadding: 2 },
+      columnStyles: {
+        0: { cellWidth: 80 },
+        1: { halign: 'right', cellWidth: 25 },
+        2: { halign: 'right', cellWidth: 25 },
+        3: { halign: 'right', cellWidth: 30 },
+        4: { halign: 'right', cellWidth: 30 }
+      }
+    });
+
+    yPos = doc.lastAutoTable?.finalY ? doc.lastAutoTable.finalY + 10 : yPos + 10;
+
+    // Deductions Section
+    if (inputs.preTaxDeductions.length > 0 || inputs.postTaxDeductions.length > 0) {
+      const deductionsData: string[][] = [];
+      inputs.preTaxDeductions.forEach(ded => {
+        deductionsData.push([ded.name + ' (Salary Sacrifice)', formatCurrency(ded.amount), formatCurrency(ded.ytdAmount)]);
+      });
+
+      autoTable(doc, {
+        startY: yPos,
+        head: [['DEDUCTIONS', 'THIS PAY', 'YTD']],
+        body: deductionsData,
+        foot: [['TOTAL', formatCurrency(results.preTaxDeductionsTotal), formatCurrency(results.ytd.preTaxDeductions)]],
+        theme: 'plain',
+        headStyles: { fillColor: [255, 255, 255], textColor: 0, fontStyle: 'bold', fontSize: 9 },
+        footStyles: { fillColor: [240, 240, 240], textColor: 0, fontStyle: 'bold' },
+        styles: { fontSize: 9, cellPadding: 2 },
+        columnStyles: {
+          0: { cellWidth: 130 },
+          1: { halign: 'right', cellWidth: 30 },
+          2: { halign: 'right', cellWidth: 30 }
+        }
+      });
+
+      yPos = doc.lastAutoTable?.finalY ? doc.lastAutoTable.finalY + 10 : yPos + 10;
+    }
+
+    // Tax Section
+    const taxData: string[][] = [
+      ['PAYG', formatCurrency(results.tax), formatCurrency(results.ytd.tax)]
+    ];
+    if (results.medicareLevy > 0) {
+      taxData.push(['Medicare Levy', formatCurrency(results.medicareLevy), formatCurrency(results.ytd.medicareLevy)]);
+    }
+    if (results.medicareLevySurcharge > 0) {
+      taxData.push(['Medicare Levy Surcharge', formatCurrency(results.medicareLevySurcharge), formatCurrency(results.ytd.medicareLevySurcharge)]);
+    }
+
+    autoTable(doc, {
+      startY: yPos,
+      head: [['TAX', 'THIS PAY', 'YTD']],
+      body: taxData,
+      foot: [['TOTAL', formatCurrency(results.tax + results.totalMedicareCharges), formatCurrency(results.ytd.tax + results.ytd.totalMedicareCharges)]],
+      theme: 'plain',
+      headStyles: { fillColor: [255, 255, 255], textColor: 0, fontStyle: 'bold', fontSize: 9 },
+      footStyles: { fillColor: [240, 240, 240], textColor: 0, fontStyle: 'bold' },
+      styles: { fontSize: 9, cellPadding: 2 },
+      columnStyles: {
+        0: { cellWidth: 130 },
+        1: { halign: 'right', cellWidth: 30 },
+        2: { halign: 'right', cellWidth: 30 }
+      }
+    });
+
+    yPos = doc.lastAutoTable?.finalY ? doc.lastAutoTable.finalY + 10 : yPos + 10;
+
+    // Superannuation Section
+    const superData: string[][] = [];
+    if (inputs.superFundName) {
+      superData.push([`SGC - ${inputs.superFundName}`, formatCurrency(results.superannuation), formatCurrency(results.ytd.super)]);
+    } else {
+      superData.push(['SGC - Superannuation', formatCurrency(results.superannuation), formatCurrency(results.ytd.super)]);
+    }
+
+    autoTable(doc, {
+      startY: yPos,
+      head: [['SUPERANNUATION', 'THIS PAY', 'YTD']],
+      body: superData,
+      foot: [['TOTAL', formatCurrency(results.superannuation), formatCurrency(results.ytd.super)]],
+      theme: 'plain',
+      headStyles: { fillColor: [255, 255, 255], textColor: 0, fontStyle: 'bold', fontSize: 9 },
+      footStyles: { fillColor: [240, 240, 240], textColor: 0, fontStyle: 'bold' },
+      styles: { fontSize: 9, cellPadding: 2 },
+      columnStyles: {
+        0: { cellWidth: 130 },
+        1: { halign: 'right', cellWidth: 30 },
+        2: { halign: 'right', cellWidth: 30 }
+      }
+    });
+
+    yPos = doc.lastAutoTable?.finalY ? doc.lastAutoTable.finalY + 10 : yPos + 10;
+
+    // Leave Section
+    const leaveData: string[][] = [
+      ['Annual Leave in Hours', formatHours(results.annualLeaveAccrual), formatHours(results.leaveHoursTaken), formatHours(results.annualLeaveAccrual)]
+    ];
+
+    autoTable(doc, {
+      startY: yPos,
+      head: [['LEAVE', 'ACCRUED', 'USED', 'BALANCE']],
+      body: leaveData,
+      theme: 'plain',
+      headStyles: { fillColor: [255, 255, 255], textColor: 0, fontStyle: 'bold', fontSize: 9 },
+      styles: { fontSize: 9, cellPadding: 2 },
+      columnStyles: {
+        0: { cellWidth: 100 },
+        1: { halign: 'right', cellWidth: 30 },
+        2: { halign: 'right', cellWidth: 30 },
+        3: { halign: 'right', cellWidth: 30 }
+      }
+    });
+
+    yPos = doc.lastAutoTable?.finalY ? doc.lastAutoTable.finalY + 10 : yPos + 10;
+
+    // Payment Details Section
+    if (inputs.bankBSB && inputs.bankAccountNumber) {
+      const paymentData: string[][] = [
+        [`(${inputs.bankBSB})${maskBankAccount(inputs.bankAccountNumber)}`, inputs.employeeName || '', `${inputs.companyName} Salary`, formatCurrency(results.netIncome)]
+      ];
+
+      autoTable(doc, {
+        startY: yPos,
+        head: [['PAYMENT DETAILS', 'REFERENCE', '', 'AMOUNT']],
+        body: paymentData,
+        theme: 'plain',
+        headStyles: { fillColor: [255, 255, 255], textColor: 0, fontStyle: 'bold', fontSize: 9 },
+        styles: { fontSize: 9, cellPadding: 2 },
+        columnStyles: {
+          0: { cellWidth: 60 },
+          1: { cellWidth: 50 },
+          2: { cellWidth: 50 },
+          3: { halign: 'right', cellWidth: 30 }
+        }
+      });
+
+      yPos = doc.lastAutoTable?.finalY ? doc.lastAutoTable.finalY : yPos;
+    }
+
+    return yPos;
+  };
+
+  // SAP-like Template (Corporate dense layout)
+  const generateSAPLikePDF = (doc: jsPDFWithAutoTable, currentPayDate: Date, currentPeriodEndDate: Date) => {
+    if (!results) return 0;
+
+    let yPos = 20;
+
+    // Employee Info (top left)
+    doc.setFontSize(10);
+    doc.setFont('helvetica', 'normal');
+    if (inputs.employeeName) {
+      doc.text(`MR ${inputs.employeeName.toUpperCase()}`, 20, yPos);
+      yPos += 5;
+    }
+    if (inputs.employeeAddress) {
+      const addressLines = inputs.employeeAddress.split(',');
+      addressLines.forEach(line => {
+        doc.text(line.trim(), 20, yPos);
+        yPos += 4;
+      });
+    }
+
+    // Company Logo area (top right - placeholder)
+    if (inputs.companyName) {
+      doc.setFontSize(14);
+      doc.setFont('helvetica', 'bold');
+      doc.text(inputs.companyName, 190, 25, { align: 'right' });
+    }
+
+    yPos = 50;
+
+    // Employee Pay Details Header Table
+    doc.rect(20, yPos, 170, 8);
+    doc.setFillColor(255, 255, 255);
+    doc.setFontSize(10);
+    doc.setFont('helvetica', 'bold');
+    doc.text('EMPLOYEE PAY DETAILS', 105, yPos + 5.5, { align: 'center' });
+
+    yPos += 8;
+
+    // Details grid
+    const detailsData: string[][] = [
+      ['Month to', 'Pay Date', 'Emp No.', 'Name', 'Status'],
+      [currentPeriodEndDate.toLocaleDateString('en-AU'), currentPayDate.toLocaleDateString('en-AU'), inputs.employeeNumber || '', `${inputs.employeeName || ''}`, 'Full Time']
+    ];
+
+    autoTable(doc, {
+      startY: yPos,
+      body: detailsData,
+      theme: 'grid',
+      styles: { fontSize: 8, cellPadding: 1, lineColor: [0, 0, 0], lineWidth: 0.1 },
+      columnStyles: {
+        0: { cellWidth: 34 },
+        1: { cellWidth: 34 },
+        2: { cellWidth: 34 },
+        3: { cellWidth: 34 },
+        4: { cellWidth: 34 }
+      }
+    });
+
+    yPos = doc.lastAutoTable?.finalY ? doc.lastAutoTable.finalY + 5 : yPos + 15;
+
+    // Elements and Allowances/Deductions Table
+    const elementsData: string[][] = [];
+
+    // Earnings
+    elementsData.push([
+      inputs.basePayName,
+      formatRate(results.hourlyRate),
+      formatHours(results.basePayHours),
+      formatCurrency(results.basePayAmount),
+      '',
+      '',
+      ''
+    ]);
+
+    inputs.additionalEarnings.forEach(earning => {
+      const earningAmount = earning.hours && earning.rate ? earning.hours * earning.rate : earning.amount;
+      elementsData.push([
+        earning.name,
+        earning.rate ? formatRate(earning.rate) : '',
+        earning.hours ? formatHours(earning.hours) : '',
+        formatCurrency(earningAmount),
+        '',
+        '',
+        ''
+      ]);
+    });
+
+    // Add empty rows for spacing
+    while (elementsData.length < 3) {
+      elementsData.push(['', '', '', '', '', '', '']);
+    }
+
+    // Deductions in right columns
+    let deductionIndex = 0;
+    inputs.preTaxDeductions.forEach(ded => {
+      if (deductionIndex < elementsData.length) {
+        elementsData[deductionIndex][4] = ded.name;
+        elementsData[deductionIndex][5] = 'E';
+        elementsData[deductionIndex][6] = formatCurrency(ded.amount);
+      }
+      deductionIndex++;
+    });
+
+    if (inputs.superFundName && deductionIndex < elementsData.length) {
+      elementsData[deductionIndex][4] = inputs.superFundName;
+      elementsData[deductionIndex][5] = 'E';
+      elementsData[deductionIndex][6] = formatCurrency(results.superannuation);
+    }
+
+    autoTable(doc, {
+      startY: yPos,
+      head: [['Description', 'Rate', 'Hours', 'Value', 'Description', 'Tax Ind', 'Value']],
+      body: elementsData,
+      theme: 'grid',
+      headStyles: { fillColor: [255, 255, 255], textColor: 0, fontStyle: 'bold', fontSize: 8 },
+      styles: { fontSize: 8, cellPadding: 2, lineColor: [0, 0, 0], lineWidth: 0.1 },
+      columnStyles: {
+        0: { cellWidth: 40 },
+        1: { halign: 'right', cellWidth: 20 },
+        2: { halign: 'right', cellWidth: 20 },
+        3: { halign: 'right', cellWidth: 25 },
+        4: { cellWidth: 40 },
+        5: { halign: 'center', cellWidth: 10 },
+        6: { halign: 'right', cellWidth: 25 }
+      }
+    });
+
+    yPos = doc.lastAutoTable?.finalY ? doc.lastAutoTable.finalY + 5 : yPos + 40;
+
+    // Summary of Earnings
+    const summaryData: string[][] = [
+      ['Gross', 'Taxable Income', 'Pre Tax Allows/Deds', 'Post Tax Allows/Deds', 'Tax', 'NET INCOME'],
+      [formatCurrency(results.grossPay), formatCurrency(results.taxableIncome), formatCurrency(results.preTaxDeductionsTotal), formatCurrency(results.postTaxDeductionsTotal), formatCurrency(results.tax + results.totalMedicareCharges), formatCurrency(results.netIncome)]
+    ];
+
+    autoTable(doc, {
+      startY: yPos,
+      body: summaryData,
+      theme: 'grid',
+      styles: { fontSize: 8, cellPadding: 2, fontStyle: 'bold', lineColor: [0, 0, 0], lineWidth: 0.1 },
+      columnStyles: {
+        0: { halign: 'center', cellWidth: 28.33 },
+        1: { halign: 'center', cellWidth: 28.33 },
+        2: { halign: 'center', cellWidth: 28.33 },
+        3: { halign: 'center', cellWidth: 28.33 },
+        4: { halign: 'center', cellWidth: 28.33 },
+        5: { halign: 'center', cellWidth: 28.35 }
+      }
+    });
+
+    yPos = doc.lastAutoTable?.finalY ? doc.lastAutoTable.finalY + 5 : yPos + 15;
+
+    // Payment Disbursement
+    if (inputs.bankName && inputs.bankBSB && inputs.bankAccountNumber) {
+      const disbursementData: string[][] = [
+        ['Method', 'Account No.', 'BSB Code', 'Bank', 'Amount'],
+        ['EFT', maskBankAccount(inputs.bankAccountNumber), inputs.bankBSB, inputs.bankName, formatCurrency(results.netIncome)]
+      ];
+
+      autoTable(doc, {
+        startY: yPos,
+        head: [['PAY DISBURSEMENT DETAILS']],
+        body: disbursementData,
+        theme: 'grid',
+        headStyles: { fillColor: [255, 255, 255], textColor: 0, fontStyle: 'bold', fontSize: 8 },
+        styles: { fontSize: 8, cellPadding: 2, lineColor: [0, 0, 0], lineWidth: 0.1 },
+        columnStyles: {
+          0: { cellWidth: 34 },
+          1: { cellWidth: 34 },
+          2: { cellWidth: 34 },
+          3: { cellWidth: 34 },
+          4: { halign: 'right', cellWidth: 34 }
+        }
+      });
+
+      yPos = doc.lastAutoTable?.finalY ? doc.lastAutoTable.finalY + 5 : yPos + 15;
+    }
+
+    // YTD Details
+    const ytdData: string[][] = [
+      ['YTD Gross', 'YTD Taxable Income', 'YTD Deductions', 'YTD Tax', 'YTD Net'],
+      [formatCurrency(results.ytd.gross), formatCurrency(results.ytd.gross - results.ytd.preTaxDeductions), formatCurrency(results.ytd.preTaxDeductions + results.ytd.postTaxDeductions), formatCurrency(results.ytd.tax + results.ytd.totalMedicareCharges), formatCurrency(results.ytd.net)]
+    ];
+
+    autoTable(doc, {
+      startY: yPos,
+      head: [['YEAR TO DATE DETAILS']],
+      body: ytdData,
+      theme: 'grid',
+      headStyles: { fillColor: [255, 255, 255], textColor: 0, fontStyle: 'bold', fontSize: 8 },
+      styles: { fontSize: 8, cellPadding: 2, lineColor: [0, 0, 0], lineWidth: 0.1 },
+      columnStyles: {
+        0: { halign: 'center', cellWidth: 34 },
+        1: { halign: 'center', cellWidth: 34 },
+        2: { halign: 'center', cellWidth: 34 },
+        3: { halign: 'center', cellWidth: 34 },
+        4: { halign: 'center', cellWidth: 34 }
+      }
+    });
+
+    yPos = doc.lastAutoTable?.finalY ? doc.lastAutoTable.finalY : yPos;
+
+    // Footer
+    if (inputs.companyABN) {
+      doc.setFontSize(7);
+      doc.setFont('helvetica', 'normal');
+      doc.text(`${inputs.companyName} (ABN) ${inputs.companyABN}`, 190, 285, { align: 'right' });
+    }
+
+    return yPos;
+  };
+
+  // Simple Template (Minimalist black and white)
+  const generateSimplePDF = (doc: jsPDFWithAutoTable, currentPayDate: Date, currentPeriodEndDate: Date) => {
+    if (!results) return 0;
+
+    // Company Name
+    doc.setFontSize(14);
+    doc.setFont('helvetica', 'bold');
+    doc.text(inputs.companyName || 'Company Name', 105, 20, { align: 'center' });
+
+    // Company Address
+    doc.setFontSize(9);
+    doc.setFont('helvetica', 'normal');
+    if (inputs.companyAddress) {
+      doc.text(inputs.companyAddress, 105, 26, { align: 'center' });
+    }
+    if (inputs.companyABN) {
+      doc.text(`A.B.N. ${inputs.companyABN}`, 105, 31, { align: 'center' });
+    }
+
+    // Title
+    doc.setFontSize(18);
+    doc.setFont('helvetica', 'bold');
+    doc.text('Pay Slip', 105, 45, { align: 'center' });
+
+    // Date Range
+    doc.setFontSize(12);
+    doc.text(`${currentPayDate.toLocaleDateString('en-AU')} To ${currentPeriodEndDate.toLocaleDateString('en-AU')}`, 105, 55, { align: 'center' });
+
+    doc.setFontSize(9);
+    doc.text('Page 1', 190, 55, { align: 'right' });
+
+    let yPos = 70;
+
+    // Employee and Company Details (left side)
+    doc.setFontSize(9);
+    doc.setFont('helvetica', 'normal');
+    doc.text(inputs.companyName || '', 20, yPos);
+    doc.text(`Cheque No: ${inputs.employeeNumber || 'N/A'}`, 140, yPos);
+    yPos += 5;
+    doc.text(inputs.companyABN ? `A.B.N. ${inputs.companyABN}` : '', 20, yPos);
+    doc.text(`Payment Date: ${currentPayDate.toLocaleDateString('en-AU')}`, 140, yPos);
+    yPos += 10;
+
+    // Employee Details
+    doc.setFont('helvetica', 'bold');
+    doc.text(inputs.employeeName || '', 20, yPos);
+    yPos += 5;
+    doc.setFont('helvetica', 'normal');
+    doc.text(`Pay Frequency: ${inputs.payFrequency.charAt(0).toUpperCase() + inputs.payFrequency.slice(1)}`, 20, yPos);
+    doc.text(`Employment Classification: ${inputs.fte === '1.0' ? 'Permanent Full Time' : 'Permanent Part Time'}`, 140, yPos);
+    yPos += 5;
+    doc.text(`Pay Period From: ${currentPayDate.toLocaleDateString('en-AU')} To ${currentPeriodEndDate.toLocaleDateString('en-AU')}`, 20, yPos);
+    doc.text(`Annual Salary: ${formatCurrency(parseFloat(inputs.annualSalary))}`, 140, yPos);
+    yPos += 5;
+    doc.text(`Hourly Rate: ${formatCurrency(results.hourlyRate)}`, 20, yPos);
+    doc.text(`Hourly Rate: ${formatCurrency(results.hourlyRate)}`, 140, yPos);
+    yPos += 5;
+    if (inputs.superFundName) {
+      doc.text(`Superannuation Fund: ${inputs.superFundName}`, 20, yPos);
+      yPos += 5;
+    }
+
+    yPos += 5;
+
+    // Gross and Net Pay Summary
+    doc.setFont('helvetica', 'bold');
+    doc.text(`GROSS PAY: ${formatCurrency(results.grossPay)}`, 120, yPos);
+    yPos += 5;
+    doc.text(`NET PAY: ${formatCurrency(results.netIncome)}`, 120, yPos);
+    yPos += 10;
+
+    // Main Data Table
+    const tableData: string[][] = [];
+
+    // Base pay
+    tableData.push([
+      inputs.basePayName,
+      formatHours(results.basePayHours),
+      formatCurrency(results.hourlyRate),
+      formatCurrency(results.basePayAmount),
+      formatCurrency(results.ytd.gross),
+      'Wages'
+    ]);
+
+    // Additional earnings
+    inputs.additionalEarnings.forEach(earning => {
+      const earningAmount = earning.hours && earning.rate ? earning.hours * earning.rate : earning.amount;
+      tableData.push([
+        earning.name,
+        earning.hours ? formatHours(earning.hours) : '',
+        earning.rate ? formatCurrency(earning.rate) : '',
+        formatCurrency(earningAmount),
+        formatCurrency(earningAmount),
+        'Wages'
+      ]);
+    });
+
+    // Leave items
+    inputs.leaveItems.forEach(leave => {
+      tableData.push([
+        `${leave.type.charAt(0).toUpperCase() + leave.type.slice(1)} Leave`,
+        formatHours(leave.hours),
+        '',
+        '',
+        '',
+        'Wages'
+      ]);
+    });
+
+    // Tax
+    tableData.push([
+      'PAYG Withholding',
+      '',
+      '',
+      '-' + formatCurrency(results.tax),
+      '-' + formatCurrency(results.ytd.tax),
+      'Tax'
+    ]);
+
+    // Leave accrual
+    tableData.push([
+      'Holiday Leave Accrual',
+      formatHours(results.annualLeaveAccrual),
+      '',
+      '',
+      formatHours(results.annualLeaveAccrual),
+      'Entitlements'
+    ]);
+
+    // Super
+    if (inputs.superFundName) {
+      tableData.push([
+        `${inputs.superFundName}`,
+        '',
+        '',
+        formatCurrency(results.superannuation),
+        formatCurrency(results.ytd.super),
+        'Superannuation Expenses'
+      ]);
+    }
+
+    autoTable(doc, {
+      startY: yPos,
+      head: [['DESCRIPTION', 'HOURS', 'CALC. RATE', 'AMOUNT', 'YTD', 'TYPE']],
+      body: tableData,
+      theme: 'plain',
+      styles: { fontSize: 9, cellPadding: 2 },
+      headStyles: { fontStyle: 'bold' },
+      columnStyles: {
+        0: { cellWidth: 60 },
+        1: { halign: 'right', cellWidth: 20 },
+        2: { halign: 'right', cellWidth: 25 },
+        3: { halign: 'right', cellWidth: 25 },
+        4: { halign: 'right', cellWidth: 25 },
+        5: { cellWidth: 35 }
+      }
+    });
+
+    return doc.lastAutoTable?.finalY || yPos;
+  };
+
+  // Government Template (Official clean design)
+  const generateGovernmentPDF = (doc: jsPDFWithAutoTable, currentPayDate: Date, currentPeriodEndDate: Date) => {
+    if (!results) return 0;
+
+    let yPos = 20;
+
+    // Company Logo/Name (top right)
+    if (inputs.companyName) {
+      doc.setFontSize(12);
+      doc.setFont('helvetica', 'bold');
+      doc.text(inputs.companyName, 190, yPos, { align: 'right' });
+      yPos += 15;
+    }
+
+    // Employee and Pay Details in boxes
+    yPos = 40;
+
+    // Left box - Staff Details
+    doc.rect(20, yPos, 85, 25);
+    doc.setFontSize(9);
+    doc.setFont('helvetica', 'bold');
+    doc.text('Staff Number: ' + (inputs.employeeNumber || ''), 22, yPos + 5);
+    doc.setFont('helvetica', 'normal');
+    doc.text((inputs.employeeName || '').toUpperCase(), 22, yPos + 10);
+    doc.text('Salary Class: SOD', 22, yPos + 15);
+    yPos += 5;
+
+    // Right box - Pay Details
+    doc.rect(105, 40, 85, 25);
+    doc.setFont('helvetica', 'bold');
+    doc.text('Pay Date: ' + currentPayDate.toLocaleDateString('en-AU'), 107, 45);
+    doc.setFont('helvetica', 'normal');
+    doc.text(`Pay Period: ${currentPayDate.toLocaleDateString('en-AU')} To ${currentPeriodEndDate.toLocaleDateString('en-AU')}`, 107, 50);
+    doc.text('Pay Run Number: 001355', 107, 55);
+
+    yPos = 75;
+
+    // Main earnings/deductions table
+    const mainData: string[][] = [];
+
+    // Salary row
+    mainData.push([
+      'SALARY',
+      formatHours(results.basePayHours),
+      formatCurrency(results.hourlyRate),
+      formatCurrency(results.basePayAmount),
+      formatCurrency(results.ytd.gross)
+    ]);
+
+    // Additional earnings
+    inputs.additionalEarnings.forEach(earning => {
+      const earningAmount = earning.hours && earning.rate ? earning.hours * earning.rate : earning.amount;
+      mainData.push([
+        earning.name,
+        earning.hours ? formatHours(earning.hours) : '',
+        earning.rate ? formatCurrency(earning.rate) : '',
+        formatCurrency(earningAmount),
+        formatCurrency(earningAmount)
+      ]);
+    });
+
+    // Empty rows for spacing
+    if (mainData.length < 2) {
+      mainData.push(['', '', '', '', '']);
+    }
+
+    // Deductions section label
+    mainData.push(['Allowance', '', '', '', '']);
+    mainData.push(['', '', '', '', '']);
+    mainData.push(['Deductions', '', '', '', '']);
+    mainData.push(['', '', '', '', '']);
+    mainData.push(['Study & Training Loan Amount', '', '', '', '']);
+
+    // Totals
+    mainData.push(['', '', '', '', '']);
+    mainData.push(['Gross', '', '', formatCurrency(results.grossPay), formatCurrency(results.ytd.gross)]);
+    mainData.push(['', '', '', '', '']);
+    mainData.push(['Taxable', '', '', formatCurrency(results.taxableIncome), formatCurrency(results.ytd.gross - results.ytd.preTaxDeductions)]);
+    mainData.push(['', '', '', '', '']);
+    mainData.push(['Tax', '', '', formatCurrency(results.tax + results.totalMedicareCharges), formatCurrency(results.ytd.tax + results.ytd.totalMedicareCharges)]);
+    mainData.push(['', '', '', '', '']);
+    mainData.push(['Net Pay', '', '', formatCurrency(results.netIncome), formatCurrency(results.ytd.net)]);
+
+    autoTable(doc, {
+      startY: yPos,
+      head: [['Description', 'Hours', 'Rate', 'This Pay', 'Year To Date']],
+      body: mainData,
+      theme: 'grid',
+      headStyles: { fillColor: [255, 255, 255], textColor: 0, fontStyle: 'bold', fontSize: 9, lineWidth: 0.1, lineColor: [0, 0, 0] },
+      styles: { fontSize: 9, cellPadding: 2, lineWidth: 0.1, lineColor: [0, 0, 0] },
+      columnStyles: {
+        0: { cellWidth: 80 },
+        1: { halign: 'right', cellWidth: 20 },
+        2: { halign: 'right', cellWidth: 25 },
+        3: { halign: 'right', cellWidth: 30 },
+        4: { halign: 'right', cellWidth: 35 }
+      }
+    });
+
+    yPos = doc.lastAutoTable?.finalY ? doc.lastAutoTable.finalY + 10 : yPos + 100;
+
+    // Superannuation
+    const superData: string[][] = [
+      ['AWARE SUPER - COY', '', '', formatCurrency(results.superannuation), formatCurrency(results.ytd.super)]
+    ];
+
+    autoTable(doc, {
+      startY: yPos,
+      head: [['Superannuation', '', '', '', '']],
+      body: superData,
+      theme: 'grid',
+      headStyles: { fillColor: [255, 255, 255], textColor: 0, fontStyle: 'bold', fontSize: 9, lineWidth: 0.1, lineColor: [0, 0, 0] },
+      styles: { fontSize: 9, cellPadding: 2, lineWidth: 0.1, lineColor: [0, 0, 0] },
+      columnStyles: {
+        0: { cellWidth: 80 },
+        1: { cellWidth: 20 },
+        2: { cellWidth: 25 },
+        3: { halign: 'right', cellWidth: 30 },
+        4: { halign: 'right', cellWidth: 35 }
+      }
+    });
+
+    yPos = doc.lastAutoTable?.finalY ? doc.lastAutoTable.finalY + 10 : yPos + 20;
+
+    // Leave Balances
+    const leaveData: string[][] = [
+      ['ANNUAL LEAVE - TOTAL', 'HOURS', formatHours(results.annualLeaveAccrual)]
+    ];
+
+    autoTable(doc, {
+      startY: yPos,
+      body: leaveData,
+      theme: 'grid',
+      styles: { fontSize: 9, cellPadding: 2, fontStyle: 'bold', lineWidth: 0.1, lineColor: [0, 0, 0] },
+      columnStyles: {
+        0: { cellWidth: 100 },
+        1: { halign: 'center', cellWidth: 40 },
+        2: { halign: 'center', cellWidth: 50 }
+      }
+    });
+
+    yPos = doc.lastAutoTable?.finalY ? doc.lastAutoTable.finalY + 10 : yPos + 15;
+
+    // Bank Information
+    if (inputs.bankBSB && inputs.bankAccountNumber) {
+      const bankData: string[][] = [
+        ['BSB: ' + inputs.bankBSB, '', ''],
+        ['Account: ' + maskBankAccount(inputs.bankAccountNumber), '', ''],
+        ['Account Name: ' + (inputs.employeeName || ''), '', '']
+      ];
+
+      autoTable(doc, {
+        startY: yPos,
+        head: [['Bank Information', '', '']],
+        body: bankData,
+        theme: 'grid',
+        headStyles: { fillColor: [255, 255, 255], textColor: 0, fontStyle: 'bold', fontSize: 9, lineWidth: 0.1, lineColor: [0, 0, 0] },
+        styles: { fontSize: 9, cellPadding: 2, lineWidth: 0.1, lineColor: [0, 0, 0] },
+      });
+
+      yPos = doc.lastAutoTable?.finalY || yPos;
+    }
+
+    // Footer
+    doc.setFontSize(8);
+    doc.setFont('helvetica', 'normal');
+    if (inputs.companyABN) {
+      doc.text(`Official Copy of ${inputs.companyName} Payslip`, 105, 280, { align: 'center' });
+      doc.text(`ABN ${inputs.companyABN}`, 105, 285, { align: 'center' });
+    }
+
+    return yPos;
+  };
+
+  // Main PDF Generation Function
   const generatePDF = () => {
     if (!results) return;
 
@@ -609,156 +1417,30 @@ const PayslipCalculator: React.FC = () => {
       const currentPeriodEndDate = new Date(basePeriodEndDate);
       currentPeriodEndDate.setDate(currentPeriodEndDate.getDate() + (i * payPeriodDays));
 
-      // Header
-      doc.setFontSize(18);
-      doc.setFont('helvetica', 'bold');
-      doc.text('PAYSLIP', 105, 20, { align: 'center' });
-
-      // Company and Employee Info
-      doc.setFontSize(10);
-      doc.setFont('helvetica', 'normal');
-
-      let yPos = 35;
-
-      if (inputs.companyName) {
-        doc.setFont('helvetica', 'bold');
-        doc.text(inputs.companyName, 20, yPos);
-        yPos += 7;
+      // Generate based on selected template
+      switch (inputs.pdfTemplate) {
+        case 'xero-like':
+          generateXeroLikePDF(doc, currentPayDate, currentPeriodEndDate);
+          break;
+        case 'sap-like':
+          generateSAPLikePDF(doc, currentPayDate, currentPeriodEndDate);
+          break;
+        case 'simple':
+          generateSimplePDF(doc, currentPayDate, currentPeriodEndDate);
+          break;
+        case 'government':
+          generateGovernmentPDF(doc, currentPayDate, currentPeriodEndDate);
+          break;
+        default:
+          generateXeroLikePDF(doc, currentPayDate, currentPeriodEndDate);
       }
-
-      if (inputs.employeeName || inputs.employeeNumber) {
-        doc.setFont('helvetica', 'normal');
-        if (inputs.employeeName) {
-          doc.text(`Employee: ${inputs.employeeName}`, 20, yPos);
-          yPos += 5;
-        }
-        if (inputs.employeeNumber) {
-          doc.text(`Employee #: ${inputs.employeeNumber}`, 20, yPos);
-          yPos += 5;
-        }
-      }
-
-      yPos += 3;
-      doc.text(`Pay Date: ${currentPayDate.toLocaleDateString('en-AU')}`, 20, yPos);
-      yPos += 5;
-      doc.text(`Period End: ${currentPeriodEndDate.toLocaleDateString('en-AU')}`, 20, yPos);
-      yPos += 5;
-      doc.text(`Pay Frequency: ${inputs.payFrequency.charAt(0).toUpperCase() + inputs.payFrequency.slice(1)}`, 20, yPos);
-      yPos += 10;
-
-      // Earnings Section
-      const earningsData = [];
-
-      // Base pay
-      earningsData.push([
-        inputs.basePayName,
-        formatHours(results.basePayHours),
-        formatCurrency(results.hourlyRate),
-        formatCurrency(results.basePayAmount)
-      ]);
-
-      // Additional earnings
-      inputs.additionalEarnings.forEach(earning => {
-        const earningAmount = earning.hours && earning.rate
-          ? earning.hours * earning.rate
-          : earning.amount;
-        earningsData.push([
-          earning.name,
-          earning.hours ? formatHours(earning.hours) : '-',
-          earning.rate ? formatCurrency(earning.rate) : '-',
-          formatCurrency(earningAmount)
-        ]);
-      });
-
-      autoTable(doc, {
-        startY: yPos,
-        head: [['Earnings', 'Hours', 'Rate', 'Amount']],
-        body: earningsData,
-        theme: 'grid',
-        headStyles: { fillColor: [66, 139, 202], textColor: 255, fontStyle: 'bold' },
-        footStyles: { fillColor: [245, 245, 245], textColor: 0, fontStyle: 'bold' },
-        foot: [['Gross Pay', '', '', formatCurrency(results.grossPay)]],
-      });
-
-      yPos = doc.lastAutoTable?.finalY ? doc.lastAutoTable.finalY + 10 : yPos + 10;
-
-      // Deductions Section
-      const deductionsData = [];
-
-      // Pre-tax deductions
-      inputs.preTaxDeductions.forEach(ded => {
-        deductionsData.push([ded.name + ' (Pre-tax)', formatCurrency(ded.amount), formatCurrency(ded.ytdAmount)]);
-      });
-
-      // Tax
-      deductionsData.push(['Income Tax', formatCurrency(results.tax), formatCurrency(results.ytd.tax)]);
-      deductionsData.push(['Medicare Levy', formatCurrency(results.medicareLevy), formatCurrency(results.ytd.medicareLevy)]);
-
-      if (results.medicareLevySurcharge > 0) {
-        deductionsData.push(['Medicare Levy Surcharge', formatCurrency(results.medicareLevySurcharge), formatCurrency(results.ytd.medicareLevySurcharge)]);
-      }
-
-      // Post-tax deductions
-      inputs.postTaxDeductions.forEach(ded => {
-        deductionsData.push([ded.name, formatCurrency(ded.amount), formatCurrency(ded.ytdAmount)]);
-      });
-
-      autoTable(doc, {
-        startY: yPos,
-        head: [['Deductions', 'This Period', 'YTD']],
-        body: deductionsData,
-        theme: 'grid',
-        headStyles: { fillColor: [217, 83, 79], textColor: 255, fontStyle: 'bold' },
-      });
-
-      yPos = doc.lastAutoTable?.finalY ? doc.lastAutoTable.finalY + 10 : yPos + 10;
-
-      // Summary Section
-      const summaryData = [
-        ['Gross Pay', formatCurrency(results.grossPay), formatCurrency(results.ytd.gross)],
-        ['Total Deductions', formatCurrency(results.preTaxDeductionsTotal + results.tax + results.totalMedicareCharges + results.postTaxDeductionsTotal), formatCurrency(results.ytd.preTaxDeductions + results.ytd.tax + results.ytd.totalMedicareCharges + results.ytd.postTaxDeductions)],
-        ['Net Pay', formatCurrency(results.netIncome), formatCurrency(results.ytd.net)],
-        ['Superannuation', formatCurrency(results.superannuation), formatCurrency(results.ytd.super)]
-      ];
-
-      autoTable(doc, {
-        startY: yPos,
-        head: [['Summary', 'This Period', 'YTD']],
-        body: summaryData,
-        theme: 'grid',
-        headStyles: { fillColor: [92, 184, 92], textColor: 255, fontStyle: 'bold' },
-        footStyles: { fillColor: [245, 245, 245], textColor: 0, fontStyle: 'bold' },
-      });
-
-      yPos = doc.lastAutoTable?.finalY ? doc.lastAutoTable.finalY + 10 : yPos + 10;
-
-      // Leave Balance Section
-      if (inputs.leaveItems.length > 0) {
-        const leaveData = inputs.leaveItems.map(leave => [
-          leave.type.charAt(0).toUpperCase() + leave.type.slice(1) + ' Leave',
-          formatHours(leave.hours) + ' hrs'
-        ]);
-
-        autoTable(doc, {
-          startY: yPos,
-          head: [['Leave Taken', 'Hours']],
-          body: leaveData,
-          theme: 'grid',
-          headStyles: { fillColor: [240, 173, 78], textColor: 255, fontStyle: 'bold' },
-        });
-
-        yPos = doc.lastAutoTable?.finalY ? doc.lastAutoTable.finalY + 5 : yPos + 5;
-      }
-
-      // Annual Leave Accrual
-      doc.setFontSize(9);
-      doc.text(`Annual Leave Accrued This Period: ${formatHours(results.annualLeaveAccrual)} hrs`, 20, yPos + 5);
     }
 
     // Save PDF
+    const templateName = templates.find(t => t.id === inputs.pdfTemplate)?.name || 'payslip';
     const filename = numberOfPayslips > 1
-      ? `payslips_${inputs.payDate}_to_${numberOfPayslips}_periods.pdf`
-      : `payslip_${inputs.payDate}.pdf`;
+      ? `${templateName}_payslips_${inputs.payDate}_x${numberOfPayslips}.pdf`
+      : `${templateName}_payslip_${inputs.payDate}.pdf`;
 
     doc.save(filename);
   };
