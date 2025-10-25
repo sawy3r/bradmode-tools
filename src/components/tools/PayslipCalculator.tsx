@@ -655,11 +655,7 @@ const PayslipCalculator: React.FC = () => {
     doc.setDrawColor(180, 180, 180);
     doc.setLineWidth(0.5);
     const summaryBarHeight = 8;
-    doc.rect(20, yPos, 175, summaryBarHeight, 'FD'); // Wider bar with border
-
-    // Add bottom border
-    doc.setDrawColor(180, 180, 180);
-    doc.line(20, yPos + summaryBarHeight, 195, yPos + summaryBarHeight);
+    doc.rect(20, yPos, 190, summaryBarHeight, 'FD'); // Full width bar to match tables
 
     doc.setFontSize(8);
     doc.setFont('helvetica', 'normal');
@@ -714,16 +710,12 @@ const PayslipCalculator: React.FC = () => {
         fillColor: [255, 255, 255],
         textColor: 0,
         fontStyle: 'bold',
-        fontSize: 9,
-        lineWidth: 0.5,
-        lineColor: [180, 180, 180]
+        fontSize: 9
       },
       footStyles: {
         fillColor: [240, 240, 240],
         textColor: 0,
-        fontStyle: 'bold',
-        lineWidth: 0.5,
-        lineColor: [180, 180, 180]
+        fontStyle: 'bold'
       },
       styles: { fontSize: 9, cellPadding: 1 },
       columnStyles: {
@@ -737,6 +729,37 @@ const PayslipCalculator: React.FC = () => {
         // Right-align numeric column headers
         if (data.section === 'head' && data.column.index > 0) {
           data.cell.styles.halign = 'right';
+        }
+      },
+      didDrawCell: function(data) {
+        const darkGrey = [180, 180, 180];
+        doc.setDrawColor(...darkGrey);
+        doc.setLineWidth(0.5);
+
+        // Bottom border on heading rows
+        if (data.section === 'head') {
+          doc.line(
+            data.cell.x,
+            data.cell.y + data.cell.height,
+            data.cell.x + data.cell.width,
+            data.cell.y + data.cell.height
+          );
+        }
+
+        // Top and bottom borders on footer rows
+        if (data.section === 'foot') {
+          doc.line(
+            data.cell.x,
+            data.cell.y,
+            data.cell.x + data.cell.width,
+            data.cell.y
+          );
+          doc.line(
+            data.cell.x,
+            data.cell.y + data.cell.height,
+            data.cell.x + data.cell.width,
+            data.cell.y + data.cell.height
+          );
         }
       }
     });
@@ -760,16 +783,12 @@ const PayslipCalculator: React.FC = () => {
           fillColor: [255, 255, 255],
           textColor: 0,
           fontStyle: 'bold',
-          fontSize: 9,
-          lineWidth: 0.5,
-          lineColor: [180, 180, 180]
+          fontSize: 9
         },
         footStyles: {
           fillColor: [240, 240, 240],
           textColor: 0,
-          fontStyle: 'bold',
-          lineWidth: 0.5,
-          lineColor: [180, 180, 180]
+          fontStyle: 'bold'
         },
         styles: { fontSize: 9, cellPadding: 1 },
         columnStyles: {
@@ -780,6 +799,37 @@ const PayslipCalculator: React.FC = () => {
         didParseCell: function(data) {
           if (data.section === 'head' && data.column.index > 0) {
             data.cell.styles.halign = 'right';
+          }
+        },
+        didDrawCell: function(data) {
+          const darkGrey = [180, 180, 180];
+          doc.setDrawColor(...darkGrey);
+          doc.setLineWidth(0.5);
+
+          // Bottom border on heading rows
+          if (data.section === 'head') {
+            doc.line(
+              data.cell.x,
+              data.cell.y + data.cell.height,
+              data.cell.x + data.cell.width,
+              data.cell.y + data.cell.height
+            );
+          }
+
+          // Top and bottom borders on footer rows
+          if (data.section === 'foot') {
+            doc.line(
+              data.cell.x,
+              data.cell.y,
+              data.cell.x + data.cell.width,
+              data.cell.y
+            );
+            doc.line(
+              data.cell.x,
+              data.cell.y + data.cell.height,
+              data.cell.x + data.cell.width,
+              data.cell.y + data.cell.height
+            );
           }
         }
       });
@@ -808,16 +858,12 @@ const PayslipCalculator: React.FC = () => {
         fillColor: [255, 255, 255],
         textColor: 0,
         fontStyle: 'bold',
-        fontSize: 9,
-        lineWidth: 0.5,
-        lineColor: [180, 180, 180]
+        fontSize: 9
       },
       footStyles: {
         fillColor: [240, 240, 240],
         textColor: 0,
-        fontStyle: 'bold',
-        lineWidth: 0.5,
-        lineColor: [180, 180, 180]
+        fontStyle: 'bold'
       },
       styles: { fontSize: 9, cellPadding: 1 },
       columnStyles: {
@@ -828,6 +874,37 @@ const PayslipCalculator: React.FC = () => {
       didParseCell: function(data) {
         if (data.section === 'head' && data.column.index > 0) {
           data.cell.styles.halign = 'right';
+        }
+      },
+      didDrawCell: function(data) {
+        const darkGrey = [180, 180, 180];
+        doc.setDrawColor(...darkGrey);
+        doc.setLineWidth(0.5);
+
+        // Bottom border on heading rows
+        if (data.section === 'head') {
+          doc.line(
+            data.cell.x,
+            data.cell.y + data.cell.height,
+            data.cell.x + data.cell.width,
+            data.cell.y + data.cell.height
+          );
+        }
+
+        // Top and bottom borders on footer rows
+        if (data.section === 'foot') {
+          doc.line(
+            data.cell.x,
+            data.cell.y,
+            data.cell.x + data.cell.width,
+            data.cell.y
+          );
+          doc.line(
+            data.cell.x,
+            data.cell.y + data.cell.height,
+            data.cell.x + data.cell.width,
+            data.cell.y + data.cell.height
+          );
         }
       }
     });
@@ -852,16 +929,12 @@ const PayslipCalculator: React.FC = () => {
         fillColor: [255, 255, 255],
         textColor: 0,
         fontStyle: 'bold',
-        fontSize: 9,
-        lineWidth: 0.5,
-        lineColor: [180, 180, 180]
+        fontSize: 9
       },
       footStyles: {
         fillColor: [240, 240, 240],
         textColor: 0,
-        fontStyle: 'bold',
-        lineWidth: 0.5,
-        lineColor: [180, 180, 180]
+        fontStyle: 'bold'
       },
       styles: { fontSize: 9, cellPadding: 1 },
       columnStyles: {
@@ -873,6 +946,37 @@ const PayslipCalculator: React.FC = () => {
         // Right-align numeric column headers
         if (data.section === 'head' && data.column.index > 0) {
           data.cell.styles.halign = 'right';
+        }
+      },
+      didDrawCell: function(data) {
+        const darkGrey = [180, 180, 180];
+        doc.setDrawColor(...darkGrey);
+        doc.setLineWidth(0.5);
+
+        // Bottom border on heading rows
+        if (data.section === 'head') {
+          doc.line(
+            data.cell.x,
+            data.cell.y + data.cell.height,
+            data.cell.x + data.cell.width,
+            data.cell.y + data.cell.height
+          );
+        }
+
+        // Top and bottom borders on footer rows
+        if (data.section === 'foot') {
+          doc.line(
+            data.cell.x,
+            data.cell.y,
+            data.cell.x + data.cell.width,
+            data.cell.y
+          );
+          doc.line(
+            data.cell.x,
+            data.cell.y + data.cell.height,
+            data.cell.x + data.cell.width,
+            data.cell.y + data.cell.height
+          );
         }
       }
     });
@@ -893,9 +997,7 @@ const PayslipCalculator: React.FC = () => {
         fillColor: [255, 255, 255],
         textColor: 0,
         fontStyle: 'bold',
-        fontSize: 9,
-        lineWidth: 0.5,
-        lineColor: [180, 180, 180]
+        fontSize: 9
       },
       styles: { fontSize: 9, cellPadding: 1 },
       columnStyles: {
@@ -908,6 +1010,21 @@ const PayslipCalculator: React.FC = () => {
         // Right-align numeric column headers
         if (data.section === 'head' && data.column.index > 0) {
           data.cell.styles.halign = 'right';
+        }
+      },
+      didDrawCell: function(data) {
+        const darkGrey = [180, 180, 180];
+        doc.setDrawColor(...darkGrey);
+        doc.setLineWidth(0.5);
+
+        // Bottom border on heading rows
+        if (data.section === 'head') {
+          doc.line(
+            data.cell.x,
+            data.cell.y + data.cell.height,
+            data.cell.x + data.cell.width,
+            data.cell.y + data.cell.height
+          );
         }
       }
     });
@@ -929,9 +1046,7 @@ const PayslipCalculator: React.FC = () => {
           fillColor: [255, 255, 255],
           textColor: 0,
           fontStyle: 'bold',
-          fontSize: 9,
-          lineWidth: 0.5,
-          lineColor: [180, 180, 180]
+          fontSize: 9
         },
         styles: { fontSize: 9, cellPadding: 1 },
         columnStyles: {
@@ -944,6 +1059,21 @@ const PayslipCalculator: React.FC = () => {
           // Right-align numeric column headers (only last column)
           if (data.section === 'head' && data.column.index === 3) {
             data.cell.styles.halign = 'right';
+          }
+        },
+        didDrawCell: function(data) {
+          const darkGrey = [180, 180, 180];
+          doc.setDrawColor(...darkGrey);
+          doc.setLineWidth(0.5);
+
+          // Bottom border on heading rows
+          if (data.section === 'head') {
+            doc.line(
+              data.cell.x,
+              data.cell.y + data.cell.height,
+              data.cell.x + data.cell.width,
+              data.cell.y + data.cell.height
+            );
           }
         }
       });
